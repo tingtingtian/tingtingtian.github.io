@@ -1,0 +1,1222 @@
+<!DOCTYPE html>
+
+
+
+  
+
+
+<html class="theme-next gemini use-motion" lang="zh-Hans">
+<head><meta name="generator" content="Hexo 3.9.0">
+  <meta charset="UTF-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="theme-color" content="#222">
+
+
+
+
+
+
+
+
+
+<meta http-equiv="Cache-Control" content="no-transform">
+<meta http-equiv="Cache-Control" content="no-siteapp">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+  
+  <link href="/lib/fancybox/source/jquery.fancybox.css?v=2.1.5" rel="stylesheet" type="text/css">
+
+
+
+
+
+
+
+<link href="/lib/font-awesome/css/font-awesome.min.css?v=4.6.2" rel="stylesheet" type="text/css">
+
+<link href="/css/main.css?v=5.1.4" rel="stylesheet" type="text/css">
+
+
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png?v=5.1.4">
+
+
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png?v=5.1.4">
+
+
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png?v=5.1.4">
+
+
+  <link rel="mask-icon" href="/images/logo.svg?v=5.1.4" color="#222">
+
+
+
+
+
+  <meta name="keywords" content="ceph,deployment,">
+
+
+
+
+
+
+
+
+
+
+<meta name="description" content="Ceph的部署有很多种，从最早的手动部署，到后来的Ceph-deploy，再到目前比较火的容器部署等等。但能作为生产环境部署的却不多，其中Ceph-ansible算是生产环境部署的方法之一。Ceph-ansible是基于ansible工具完成Ceph部署的。对于生产环境中动则几十、成百上千的节点数量如果一台一台安装配置效率太低。引入ansible工具可以快速完成Ceph集群的安装配置，大大提高效率">
+<meta name="keywords" content="ceph,deployment">
+<meta property="og:type" content="article">
+<meta property="og:title" content="ceph-ansible 使用">
+<meta property="og:url" content="http://yoursite.com/2019/09/28/storage/ceph/ceph-ansible-usage/index.html">
+<meta property="og:site_name" content="Bolog">
+<meta property="og:description" content="Ceph的部署有很多种，从最早的手动部署，到后来的Ceph-deploy，再到目前比较火的容器部署等等。但能作为生产环境部署的却不多，其中Ceph-ansible算是生产环境部署的方法之一。Ceph-ansible是基于ansible工具完成Ceph部署的。对于生产环境中动则几十、成百上千的节点数量如果一台一台安装配置效率太低。引入ansible工具可以快速完成Ceph集群的安装配置，大大提高效率">
+<meta property="og:locale" content="zh-Hans">
+<meta property="og:updated_time" content="2021-11-15T01:47:07.856Z">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="ceph-ansible 使用">
+<meta name="twitter:description" content="Ceph的部署有很多种，从最早的手动部署，到后来的Ceph-deploy，再到目前比较火的容器部署等等。但能作为生产环境部署的却不多，其中Ceph-ansible算是生产环境部署的方法之一。Ceph-ansible是基于ansible工具完成Ceph部署的。对于生产环境中动则几十、成百上千的节点数量如果一台一台安装配置效率太低。引入ansible工具可以快速完成Ceph集群的安装配置，大大提高效率">
+
+
+
+<script type="text/javascript" id="hexo.configurations">
+  var NexT = window.NexT || {};
+  var CONFIG = {
+    root: '/',
+    scheme: 'Gemini',
+    version: '5.1.4',
+    sidebar: {"position":"left","display":"post","offset":12,"b2t":false,"scrollpercent":false,"onmobile":false},
+    fancybox: true,
+    tabs: true,
+    motion: {"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},
+    duoshuo: {
+      userId: '0',
+      author: '博主'
+    },
+    algolia: {
+      applicationID: '',
+      apiKey: 'ea19d365600df16c1e8ef4c09ccb9bea',
+      indexName: 'bolog',
+      hits: {"per_page":10},
+      labels: {"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}
+    }
+  };
+</script>
+
+
+
+  <link rel="canonical" href="http://yoursite.com/2019/09/28/storage/ceph/ceph-ansible-usage/">
+
+
+
+
+
+<script data-ad-client="ca-pub-7938886583915179" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+
+  <title>ceph-ansible 使用 | Bolog</title>
+  
+
+
+
+
+
+
+
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage" lang="zh-Hans">
+
+  
+  
+    
+  
+
+  <div class="container sidebar-position-left page-post-detail">
+    <div class="headband"></div>
+
+    <header id="header" class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-wrapper">
+  <div class="site-meta ">
+    
+
+    <div class="custom-logo-site-title">
+      <a href="/" class="brand" rel="start">
+        <span class="logo-line-before"><i></i></span>
+        <span class="site-title">Bolog</span>
+        <span class="logo-line-after"><i></i></span>
+      </a>
+    </div>
+      
+        <p class="site-subtitle"></p>
+      
+  </div>
+
+  <div class="site-nav-toggle">
+    <button>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+      <span class="btn-bar"></span>
+    </button>
+  </div>
+</div>
+
+<nav class="site-nav">
+  
+
+  
+    <ul id="menu" class="menu">
+      
+        
+        <li class="menu-item menu-item-home">
+          <a href="/" rel="section">
+            
+              <i class="menu-item-icon fa fa-fw fa-home"></i> <br>
+            
+            首页
+          </a>
+        </li>
+      
+        
+        <li class="menu-item menu-item-about">
+          <a href="/about/" rel="section">
+            
+              <i class="menu-item-icon fa fa-fw fa-user"></i> <br>
+            
+            关于
+          </a>
+        </li>
+      
+        
+        <li class="menu-item menu-item-tags">
+          <a href="/tags/" rel="section">
+            
+              <i class="menu-item-icon fa fa-fw fa-tags"></i> <br>
+            
+            标签
+          </a>
+        </li>
+      
+        
+        <li class="menu-item menu-item-categories">
+          <a href="/categories/" rel="section">
+            
+              <i class="menu-item-icon fa fa-fw fa-th"></i> <br>
+            
+            分类
+          </a>
+        </li>
+      
+        
+        <li class="menu-item menu-item-archives">
+          <a href="/archives/" rel="section">
+            
+              <i class="menu-item-icon fa fa-fw fa-archive"></i> <br>
+            
+            归档
+          </a>
+        </li>
+      
+
+      
+        <li class="menu-item menu-item-search">
+          
+            <a href="javascript:;" class="popup-trigger">
+          
+            
+              <i class="menu-item-icon fa fa-search fa-fw"></i> <br>
+            
+            搜索
+          </a>
+        </li>
+      
+    </ul>
+  
+
+  
+    <div class="site-search">
+      
+  <div class="popup search-popup local-search-popup">
+  <div class="local-search-header clearfix">
+    <span class="search-icon">
+      <i class="fa fa-search"></i>
+    </span>
+    <span class="popup-btn-close">
+      <i class="fa fa-times-circle"></i>
+    </span>
+    <div class="local-search-input-wrapper">
+      <input autocomplete="off" placeholder="搜索..." spellcheck="false" type="text" id="local-search-input">
+    </div>
+  </div>
+  <div id="local-search-result"></div>
+</div>
+
+
+
+    </div>
+  
+</nav>
+
+
+
+ </div>
+    </header>
+
+    <main id="main" class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          <div id="content" class="content">
+            
+
+  <div id="posts" class="posts-expand">
+    
+
+  
+
+  
+  
+  
+
+  <article class="post post-type-normal" itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block">
+    <link itemprop="mainEntityOfPage" href="http://yoursite.com/2019/09/28/storage/ceph/ceph-ansible-usage/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="博">
+      <meta itemprop="description" content>
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="Bolog">
+    </span>
+
+    
+      <header class="post-header">
+
+        
+        
+          <h1 class="post-title" itemprop="name headline">ceph-ansible 使用</h1>
+        
+
+        <div class="post-meta">
+          <span class="post-time">
+            
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              
+                <span class="post-meta-item-text">发表于</span>
+              
+              <time title="创建于" itemprop="dateCreated datePublished" datetime="2019-09-28T08:52:30+08:00">
+                2019-09-28
+              </time>
+            
+
+            
+
+            
+          </span>
+
+          
+            <span class="post-category">
+            
+              <span class="post-meta-divider">|</span>
+            
+              <span class="post-meta-item-icon">
+                <i class="fa fa-folder-o"></i>
+              </span>
+              
+                <span class="post-meta-item-text">分类于</span>
+              
+              
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/storage/" itemprop="url" rel="index">
+                    <span itemprop="name">storage</span>
+                  </a>
+                </span>
+
+                
+                
+              
+            </span>
+          
+
+          
+            
+              <span class="post-comments-count">
+                <span class="post-meta-divider">|</span>
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-comment-o"></i>
+                </span>
+                <a href="/2019/09/28/storage/ceph/ceph-ansible-usage/#comments" itemprop="discussionUrl">
+                  <span class="post-comments-count valine-comment-count" data-xid="/2019/09/28/storage/ceph/ceph-ansible-usage/" itemprop="commentCount"></span>
+                </a>
+              </span>
+            
+          
+
+          
+          
+
+          
+
+          
+
+          
+
+        </div>
+      </header>
+    
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+      
+
+      
+        <p>Ceph的部署有很多种，从最早的手动部署，到后来的Ceph-deploy，再到目前比较火的容器部署等等。但能作为生产环境部署的却不多，其中Ceph-ansible算是生产环境部署的方法之一。Ceph-ansible是基于ansible工具完成Ceph部署的。对于生产环境中动则几十、成百上千的节点数量如果一台一台安装配置效率太低。引入ansible工具可以快速完成Ceph集群的安装配置，大大提高效率。让运维人员从机械重复的工作中解脱出来。</p>
+<h1 id="使用"><a href="#使用" class="headerlink" title="使用"></a>使用</h1><h2 id="环境"><a href="#环境" class="headerlink" title="环境"></a>环境</h2><p>三个节点，其中一个节点用作ansible和Ceph节点的复用节点。</p>
+<table>
+<thead>
+<tr>
+<th style="text-align:center">节点IP</th>
+<th style="text-align:center">节点角色</th>
+<th style="text-align:center">OS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:center">172.30.12.137</td>
+<td style="text-align:center">ansible节点、ceph节点</td>
+<td style="text-align:center">CentOS Linux release 7.7.1908</td>
+</tr>
+<tr>
+<td style="text-align:center">172.30.12.197</td>
+<td style="text-align:center">ceph节点</td>
+<td style="text-align:center">CentOS Linux release 7.7.1908</td>
+</tr>
+<tr>
+<td style="text-align:center">172.30.12.227</td>
+<td style="text-align:center">ceph节点</td>
+<td style="text-align:center">CentOS Linux release 7.7.1908</td>
+</tr>
+</tbody>
+</table>
+<p>本文中使用的ansible工具运行在一个 CentOS7.6.1810 的容器内。</p>
+<h2 id="安装"><a href="#安装" class="headerlink" title="安装"></a>安装</h2><p>ceph-ansible是基于ansible工作的，所以要先安装ansible。既然要安装ansible，首先要先搞清楚安装哪个版本？</p>
+<p>本文部署的Ceph版本为<code>mimic</code>，官方推荐可以使用<code>stable-3.1</code>和<code>stable-3.2</code>，我选择了较新的<code>stable-3.2</code>，<code>stable-3.2</code>对应的ansible版本为2.6。（更多关于版本对应关系请见<a href="https://docs.ceph.com/ceph-ansible/master/#releases" target="_blank" rel="noopener">官网</a>）</p>
+<p>选择完了ansible版本接下来就可以安装了，安装分为两种方式</p>
+<ul>
+<li>pip 安装</li>
+<li>yum/apt 安装</li>
+</ul>
+<p>由于 yum/apt 安装版本选择范围比较狭窄，所以本人推荐使用 pip 安装。(关于pip安装请见<a href="https://pip.pypa.io/en/stable/installing/" target="_blank" rel="noopener">pypa官网</a>)</p>
+<p>首先clone ceph-ansible project<br><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta">#</span><span class="bash"> git <span class="built_in">clone</span> git@github.com:ceph/ceph-ansible.git</span></span><br><span class="line"><span class="meta">#</span><span class="bash"> git checkout -b 3.2.0 v3.2.0</span></span><br></pre></td></tr></table></figure></p>
+<p>然后使用ceph-ansible中推荐的<code>requirements.txt</code>安装对应版本的ansible<br><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">pip install -r ./ceph-ansible/requirements.txt</span><br></pre></td></tr></table></figure></p>
+<p>待安装完成后，查看确认ansible版本<br><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta">#</span><span class="bash"> ansible --version</span></span><br><span class="line">ansible 2.6.19</span><br><span class="line">  config file = /root/ceph-ansible/ansible.cfg</span><br><span class="line">  configured module search path = [u'/root/.ansible/plugins/modules', u'/usr/share/ansible/plugins/modules']</span><br><span class="line">  ansible python module location = /usr/lib/python2.7/site-packages/ansible</span><br><span class="line">  executable location = /usr/bin/ansible</span><br><span class="line">  python version = 2.7.5 (default, Oct 30 2018, 23:45:53) [GCC 4.8.5 20150623 (Red Hat 4.8.5-36)]</span><br></pre></td></tr></table></figure></p>
+<h2 id="配置"><a href="#配置" class="headerlink" title="配置"></a>配置</h2><h3 id="ansible-配置"><a href="#ansible-配置" class="headerlink" title="ansible 配置"></a>ansible 配置</h3><p>ansible inventory 自定义的配置可以放置在任何位置，只是在运行ansible时增加<code>-i {inventory host path}</code>指定其路径即可。若不指定inventory文件，ansible将去<code>/etc/ansible/hosts</code>这个路径去找。</p>
+<p>inventory配置：<br><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">[mons]</span><br><span class="line">172.30.12.197 ansible_ssh_user=root ansible_ssh_pass=1234\$\#</span><br><span class="line"></span><br><span class="line">[osds]</span><br><span class="line">172.30.12.137 ansible_ssh_user=root ansible_ssh_pass=1234\$\#</span><br><span class="line">172.30.12.197 ansible_ssh_user=root ansible_ssh_pass=1234\$\#</span><br><span class="line"></span><br><span class="line">[mgrs]</span><br><span class="line">172.30.12.137 ansible_ssh_user=root ansible_ssh_pass=1234\$\#</span><br></pre></td></tr></table></figure></p>
+<p>密码中若存在特殊字符<code>$</code>,<code>#</code>等，需要使用<code>\\</code>进行转义。<br>配置完成后，可使用<code>ansible all -i {inventory host} -m ping</code>测试节点连通情况</p>
+<figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta">#</span><span class="bash"> ansible all -i dummy-ansible-hosts -m ping</span></span><br><span class="line">172.30.12.197 | SUCCESS =&gt; &#123;</span><br><span class="line">    "changed": false,</span><br><span class="line">    "ping": "pong"</span><br><span class="line">&#125;</span><br><span class="line">172.30.12.227 | SUCCESS =&gt; &#123;</span><br><span class="line">    "changed": false,</span><br><span class="line">    "ping": "pong"</span><br><span class="line">&#125;</span><br><span class="line">172.30.12.137 | SUCCESS =&gt; &#123;</span><br><span class="line">    "changed": false,</span><br><span class="line">    "ping": "pong"</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h3 id="ceph-ansible-配置"><a href="#ceph-ansible-配置" class="headerlink" title="ceph-ansible 配置"></a>ceph-ansible 配置</h3><p>ceph-ansible的配置，主要是对group变量的配置，一般场景中我们不需要修改role。</p>
+<h4 id="配置-all-yml"><a href="#配置-all-yml" class="headerlink" title="配置 all.yml"></a>配置 all.yml</h4><p>首先：<br><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">cp ./gourp_vars/all.yml.sample ./gourp_vars/all.yml</span><br></pre></td></tr></table></figure></p>
+<p>然后，修改<code>all.yml</code>中的配置，如下：<br><figure class="highlight yaml"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment"># Inventory host group variables</span></span><br><span class="line"><span class="attr">mon_group_name:</span> <span class="string">mons</span></span><br><span class="line"><span class="attr">osd_group_name:</span> <span class="string">osds</span></span><br><span class="line"><span class="comment">#rgw_group_name: rgws</span></span><br><span class="line"><span class="comment">#mds_group_name: mdss</span></span><br><span class="line"><span class="comment">#nfs_group_name: nfss</span></span><br><span class="line"><span class="comment">#restapi_group_name: restapis</span></span><br><span class="line"><span class="comment">#rbdmirror_group_name: rbdmirrors</span></span><br><span class="line"><span class="comment">#client_group_name: clients</span></span><br><span class="line"><span class="comment">#iscsi_gw_group_name: iscsigws</span></span><br><span class="line"><span class="comment">#mgr_group_name: mgrs</span></span><br><span class="line"><span class="comment"># 上述 Inventory host 相关变量的默认值与 Inventory配置中的标签名一致，也就是说这里注释打开与否没有影响</span></span><br><span class="line"><span class="string">...</span></span><br><span class="line"><span class="comment"># If configure_firewall is true, then ansible will try to configure the</span></span><br><span class="line"><span class="comment"># appropriate firewalling rules so that Ceph daemons can communicate</span></span><br><span class="line"><span class="comment"># with each others.</span></span><br><span class="line"><span class="comment">#configure_firewall: True</span></span><br><span class="line"><span class="attr">configure_firewall:</span> <span class="literal">False</span></span><br><span class="line"><span class="comment"># 建议Firewall配不明白的同学将Firewall关闭，免得找麻烦。</span></span><br><span class="line"><span class="string">...</span></span><br><span class="line"><span class="comment"># Set type of NTP client daemon to use, valid entries are chronyd, ntpd or timesyncd</span></span><br><span class="line"><span class="comment"># Note that this selection is currently ignored on containerized deployments</span></span><br><span class="line"><span class="comment">#ntp_daemon_type: timesyncd</span></span><br><span class="line"><span class="attr">ntp_daemon_type:</span> <span class="string">chronyd</span></span><br><span class="line"><span class="comment"># Ceph需要做时间同步，具体用什么做可根据自己环境来选择。目前提供支持的有三种 chronyd, ntpd, timesyncd</span></span><br><span class="line"><span class="string">...</span></span><br><span class="line"><span class="comment"># ORIGIN SOURCE</span></span><br><span class="line"><span class="comment">#</span></span><br><span class="line"><span class="comment"># Choose between:</span></span><br><span class="line"><span class="comment"># - 'repository' means that you will get ceph installed through a new repository. Later below choose between 'community', 'rhcs', 'dev' or 'obs'</span></span><br><span class="line"><span class="comment"># - 'distro' means that no separate repo file will be added</span></span><br><span class="line"><span class="comment">#  you will get whatever version of Ceph is included in your Linux distro.</span></span><br><span class="line"><span class="comment"># 'local' means that the ceph binaries will be copied over from the local machine</span></span><br><span class="line"><span class="comment">#ceph_origin: dummy</span></span><br><span class="line"><span class="attr">ceph_origin:</span> <span class="string">repository</span></span><br><span class="line"><span class="comment">#valid_ceph_origins:</span></span><br><span class="line"><span class="comment">#  - repository</span></span><br><span class="line"><span class="comment">#  - distro</span></span><br><span class="line"><span class="comment">#  - local</span></span><br><span class="line"></span><br><span class="line"><span class="attr">ceph_repository:</span> <span class="string">community</span></span><br><span class="line"><span class="comment">#valid_ceph_repository:</span></span><br><span class="line"><span class="comment">#  - community</span></span><br><span class="line"><span class="comment">#  - rhcs</span></span><br><span class="line"><span class="comment">#  - dev</span></span><br><span class="line"><span class="comment">#  - uca</span></span><br><span class="line"><span class="comment">#  - custom</span></span><br><span class="line"><span class="comment">#  - obs</span></span><br><span class="line"></span><br><span class="line"><span class="comment"># REPOSITORY: COMMUNITY VERSION</span></span><br><span class="line"><span class="comment">#</span></span><br><span class="line"><span class="comment"># Enabled when ceph_repository == 'community'</span></span><br><span class="line"><span class="comment">#</span></span><br><span class="line"><span class="comment">#ceph_mirror: http://download.ceph.com</span></span><br><span class="line"><span class="comment">#ceph_stable_key: https://download.ceph.com/keys/release.asc</span></span><br><span class="line"><span class="comment">#ceph_stable_release: dummy</span></span><br><span class="line"><span class="comment">#ceph_stable_repo: "&#123;&#123; ceph_mirror &#125;&#125;/debian-&#123;&#123; ceph_stable_release &#125;&#125;"</span></span><br><span class="line"><span class="attr">ceph_mirror:</span> <span class="string">http://mirrors.163.com/ceph</span></span><br><span class="line"><span class="attr">ceph_stable_key:</span> <span class="string">https://mirrors.163.com/ceph/keys/release.asc</span></span><br><span class="line"><span class="attr">ceph_stable_release:</span> <span class="string">mimic</span></span><br><span class="line"><span class="attr">ceph_stable_repo:</span> <span class="string">"<span class="template-variable">&#123;&#123; ceph_mirror &#125;&#125;</span>/rpm-<span class="template-variable">&#123;&#123; ceph_stable_release &#125;&#125;</span>"</span></span><br><span class="line"><span class="comment"># Ceph 软件包的安装方式，有三种，repository使用一个新的源进行安装；distro使用linux发行版自带的源进行安装；local使用本地安装包的形式进行安装。</span></span><br><span class="line"><span class="comment"># 具体情况根据自身要求而定吧。</span></span><br><span class="line"><span class="string">...</span></span><br><span class="line"><span class="comment">## Monitor options</span></span><br><span class="line"><span class="comment">#</span></span><br><span class="line"><span class="comment"># You must define either monitor_interface, monitor_address or monitor_address_block.</span></span><br><span class="line"><span class="comment"># These variables must be defined at least in all.yml and overrided if needed (inventory host file or group_vars/*.yml).</span></span><br><span class="line"><span class="comment"># Eg. If you want to specify for each monitor which address the monitor will bind to you can set it in your **inventory host file** by using 'monitor_address' variable.</span></span><br><span class="line"><span class="comment"># Preference will go to monitor_address if both monitor_address and monitor_interface are defined.</span></span><br><span class="line"><span class="comment">#monitor_interface: interface</span></span><br><span class="line"><span class="attr">monitor_interface:</span> <span class="string">ens33</span></span><br><span class="line"><span class="comment">#monitor_address: 0.0.0.0</span></span><br><span class="line"><span class="comment">#monitor_address_block: subnet</span></span><br><span class="line"><span class="comment"># set to either ipv4 or ipv6, whichever your network is using</span></span><br><span class="line"><span class="comment">#ip_version: ipv4</span></span><br><span class="line"><span class="comment">#mon_use_fqdn: false # if set to true, the MON name used will be the fqdn in the ceph.conf</span></span><br><span class="line"><span class="comment"># Monitor的配置，必须要在 interface, address, address_block 中选择一个定义。（更多使用方法，请仔细阅读上面的英文吧。）</span></span><br><span class="line"><span class="string">...</span></span><br><span class="line"><span class="comment">## OSD options</span></span><br><span class="line"><span class="comment">#</span></span><br><span class="line"><span class="comment">#is_hci: false</span></span><br><span class="line"><span class="comment">#hci_safety_factor: 0.2</span></span><br><span class="line"><span class="comment">#non_hci_safety_factor: 0.7</span></span><br><span class="line"><span class="comment">#osd_memory_target: 4294967296</span></span><br><span class="line"><span class="comment">#journal_size: 5120 # OSD journal size in MB</span></span><br><span class="line"><span class="attr">journal_size:</span> <span class="number">1024</span> <span class="comment"># OSD journal size in MB</span></span><br><span class="line"><span class="comment">#block_db_size: -1 # block db size in bytes for the ceph-volume lvm batch. -1 means use the default of 'as big as possible'.</span></span><br><span class="line"><span class="comment">#public_network: 0.0.0.0/0</span></span><br><span class="line"><span class="attr">public_network:</span> <span class="number">172.30</span><span class="number">.12</span><span class="number">.0</span><span class="string">/24</span></span><br><span class="line"><span class="attr">cluster_network:</span> <span class="number">172.30</span><span class="number">.12</span><span class="number">.0</span><span class="string">/24</span></span><br><span class="line"><span class="comment">#cluster_network: "&#123;&#123; public_network | regex_replace(' ', '') &#125;&#125;"</span></span><br><span class="line"><span class="comment">#osd_mkfs_type: xfs</span></span><br><span class="line"><span class="comment">#osd_mkfs_options_xfs: -f -i size=2048</span></span><br><span class="line"><span class="comment">#osd_mount_options_xfs: noatime,largeio,inode64,swalloc</span></span><br><span class="line"><span class="comment">#osd_objectstore: bluestore</span></span><br><span class="line"><span class="attr">osd_objectstore:</span> <span class="string">filestore</span></span><br><span class="line"><span class="comment"># 根据硬盘的存储介质与速度决定Journal size的大小；配置public,cluster newtwork；选择objectstore filestore or bluestore</span></span><br><span class="line"><span class="string">...</span></span><br></pre></td></tr></table></figure></p>
+<h4 id="配置-osds-yml"><a href="#配置-osds-yml" class="headerlink" title="配置 osds.yml"></a>配置 osds.yml</h4><p>首先<br><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">cp ./gourp_vars/osds.yml.sample ./gourp_vars/osds.yml</span><br></pre></td></tr></table></figure></p>
+<p>然后，修改<code>osds.yml</code>配置，如下：<br><figure class="highlight yaml"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br></pre></td><td class="code"><pre><span class="line"><span class="string">...</span></span><br><span class="line"><span class="comment"># Even though OSD nodes should not have the admin key</span></span><br><span class="line"><span class="comment"># at their disposal, some people might want to have it</span></span><br><span class="line"><span class="comment"># distributed on OSD nodes. Setting 'copy_admin_key' to 'true'</span></span><br><span class="line"><span class="comment"># will copy the admin key to the /etc/ceph/ directory</span></span><br><span class="line"><span class="comment">#copy_admin_key: false</span></span><br><span class="line"><span class="attr">copy_admin_key:</span> <span class="literal">true</span></span><br><span class="line"><span class="comment"># 根据个人喜好来吧，我喜欢各个OSD节点都有admin key</span></span><br><span class="line"><span class="string">...</span></span><br><span class="line"><span class="comment"># Declare devices to be used as OSDs</span></span><br><span class="line"><span class="comment"># All scenario(except 3rd) inherit from the following device declaration</span></span><br><span class="line"><span class="comment"># <span class="doctag">Note:</span> This scenario uses the ceph-disk tool to provision OSDs</span></span><br><span class="line"></span><br><span class="line"><span class="attr">devices:</span></span><br><span class="line">  <span class="bullet">-</span> <span class="string">/dev/sdb</span></span><br><span class="line">  <span class="bullet">-</span> <span class="string">/dev/sdc</span></span><br><span class="line">  <span class="comment">#  - /dev/sdd</span></span><br><span class="line">  <span class="comment">#  - /dev/sde</span></span><br><span class="line"></span><br><span class="line"><span class="comment">#devices: []</span></span><br><span class="line"><span class="comment"># 根据主机情况配置硬盘路径相关信息</span></span><br><span class="line"><span class="string">...</span></span><br><span class="line"><span class="attr">osd_scenario:</span> <span class="string">collocated</span></span><br><span class="line"><span class="comment">#valid_osd_scenarios:</span></span><br><span class="line"><span class="comment">#  - collocated</span></span><br><span class="line"><span class="comment">#  - non-collocated</span></span><br><span class="line"><span class="comment">#  - lvm</span></span><br><span class="line"><span class="comment"># collocated是将日志和数据部署到同一个硬盘上；non-collocated是分硬盘部署日志和数据；这两个选项都是使用ceph-disk创建的。</span></span><br><span class="line"><span class="comment"># lvm使用ceph-volume创建osd，需要指定vg、lvm等信息。</span></span><br><span class="line"><span class="comment"># 此处具体信息，请见`osds.yml.sample`里面有很详细的注解。</span></span><br><span class="line"><span class="string">...</span></span><br></pre></td></tr></table></figure></p>
+<h4 id="配置-mgrs-yml"><a href="#配置-mgrs-yml" class="headerlink" title="配置 mgrs.yml"></a>配置 mgrs.yml</h4><p>首先<br><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">cp ./gourp_vars/mgrs.yml.sample ./gourp_vars/mgrs.yml</span><br></pre></td></tr></table></figure></p>
+<p>然后，修改<code>mgrs.yml</code>配置，如下：<br><figure class="highlight yaml"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="string">...</span></span><br><span class="line"><span class="comment">###########</span></span><br><span class="line"><span class="comment"># MODULES #</span></span><br><span class="line"><span class="comment">###########</span></span><br><span class="line"><span class="comment"># Ceph mgr modules to enable, current modules available are: status,dashboard,localpool,restful,zabbix,prometheus,influx</span></span><br><span class="line"><span class="attr">ceph_mgr_modules:</span> <span class="string">[status]</span></span><br><span class="line"><span class="string">...</span></span><br></pre></td></tr></table></figure></p>
+<h2 id="部署"><a href="#部署" class="headerlink" title="部署"></a>部署</h2><h3 id="集群初始化部署"><a href="#集群初始化部署" class="headerlink" title="集群初始化部署"></a>集群初始化部署</h3><p>首先<br><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">cp ./site.yml.sample ./site.yml</span><br></pre></td></tr></table></figure></p>
+<p>然后<br><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">ansible-playbook -i &#123;inventory host&#125; site.yml</span><br><span class="line">...</span><br></pre></td></tr></table></figure></p>
+<p>部署过程需要下载RPM包安装，所以网速对部署速度的影响很大。请耐心等待。</p>
+<h3 id="增加OSD节点部署"><a href="#增加OSD节点部署" class="headerlink" title="增加OSD节点部署"></a>增加OSD节点部署</h3><p>首先<br><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">cp ./infrastructure-playbooks/add-osd.yml ./add-osd.yml</span><br></pre></td></tr></table></figure></p>
+<p>然后，修改inventory host文件，在<code>[osds]</code>中增加<code>172.30.12.227</code>这条记录，相当于增加一个osd节点。<br><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">[mons]</span><br><span class="line">172.30.12.197 ansible_ssh_user=root ansible_ssh_pass=1234\$\#</span><br><span class="line"></span><br><span class="line">[osds]</span><br><span class="line">172.30.12.137 ansible_ssh_user=root ansible_ssh_pass=1234\$\#</span><br><span class="line">172.30.12.197 ansible_ssh_user=root ansible_ssh_pass=1234\$\#</span><br><span class="line">172.30.12.227 ansible_ssh_user=root ansible_ssh_pass=1234\$\#</span><br><span class="line"></span><br><span class="line">[mgrs]</span><br><span class="line">172.30.12.137 ansible_ssh_user=root ansible_ssh_pass=1234\$\#</span><br></pre></td></tr></table></figure></p>
+<p>最后<br><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">ansible-playbook -i &#123;inventory host&#125; add-osd.yml</span><br></pre></td></tr></table></figure></p>
+<h3 id="清除集群部署"><a href="#清除集群部署" class="headerlink" title="清除集群部署"></a>清除集群部署</h3><p>首先<br><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">cp ./infrastructure-playbooks/purge-cluster.yml ./purge-cluster.yml</span><br></pre></td></tr></table></figure></p>
+<p>然后<br><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">ansible-playbook -i &#123;inventory host&#125; purge-cluster.yml</span><br></pre></td></tr></table></figure></p>
+<h3 id="Ceph配置文件分发"><a href="#Ceph配置文件分发" class="headerlink" title="Ceph配置文件分发"></a>Ceph配置文件分发</h3><p>配置文件分发各个节点<br><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">ansible all -i dummy-ansible-hosts -m copy -a "src=/root/ceph.conf dest=/etc/ceph/"</span><br></pre></td></tr></table></figure></p>
+<h1 id="参考-amp-鸣谢"><a href="#参考-amp-鸣谢" class="headerlink" title="参考&amp;鸣谢"></a>参考&amp;鸣谢</h1><ul>
+<li><a href="https://lnsyyj.github.io/2018/08/29/ceph-ansible-project/" target="_blank" rel="noopener">ceph-ansible project</a></li>
+</ul>
+
+      
+    </div>
+    
+    
+    
+
+    
+
+    
+      <div>
+        <div style="padding: 10px 0; margin: 20px auto; width: 90%; text-align: center;">
+  <div></div>
+  <button id="rewardButton" disable="enable" onclick="var qr = document.getElementById('QR'); if (qr.style.display === 'none') {qr.style.display='block';} else {qr.style.display='none'}">
+    <span>打赏</span>
+  </button>
+  <div id="QR" style="display: none;">
+
+    
+      <div id="wechat" style="display: inline-block">
+        <img id="wechat_qr" src="/images/wechatpay.png" alt="博 微信支付">
+        <p>微信支付</p>
+      </div>
+    
+
+    
+      <div id="alipay" style="display: inline-block">
+        <img id="alipay_qr" src="/images/alipay.jpeg" alt="博 支付宝">
+        <p>支付宝</p>
+      </div>
+    
+
+    
+
+  </div>
+</div>
+
+      </div>
+    
+
+    
+
+    <footer class="post-footer">
+      
+        <div class="post-tags">
+          
+            <a href="/tags/ceph/" rel="tag"># ceph</a>
+          
+            <a href="/tags/deployment/" rel="tag"># deployment</a>
+          
+        </div>
+      
+
+      
+      
+      
+
+      
+        <div class="post-nav">
+          <div class="post-nav-next post-nav-item">
+            
+              <a href="/2019/09/24/storage/ceph/rgw-auth-ldap/" rel="next" title="RGW使用外部认证验证">
+                <i class="fa fa-chevron-left"></i> RGW使用外部认证验证
+              </a>
+            
+          </div>
+
+          <span class="post-nav-divider"></span>
+
+          <div class="post-nav-prev post-nav-item">
+            
+              <a href="/2019/10/14/storage/ceph/multi-site-in-a-cluster-md/" rel="prev" title="Deploy multisite in 同一个集群">
+                Deploy multisite in 同一个集群 <i class="fa fa-chevron-right"></i>
+              </a>
+            
+          </div>
+        </div>
+      
+
+      
+      
+    </footer>
+  </div>
+  
+  
+  
+  </article>
+
+
+
+    <div class="post-spread">
+      
+    </div>
+  </div>
+
+
+          </div>
+          
+
+
+          
+
+  
+    <div class="comments" id="comments">
+    </div>
+  
+
+
+
+        </div>
+        
+          
+  
+  <div class="sidebar-toggle">
+    <div class="sidebar-toggle-line-wrap">
+      <span class="sidebar-toggle-line sidebar-toggle-line-first"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-middle"></span>
+      <span class="sidebar-toggle-line sidebar-toggle-line-last"></span>
+    </div>
+  </div>
+
+  <aside id="sidebar" class="sidebar">
+    
+    <div class="sidebar-inner">
+
+      
+
+      
+        <ul class="sidebar-nav motion-element">
+          <li class="sidebar-nav-toc sidebar-nav-active" data-target="post-toc-wrap">
+            文章目录
+          </li>
+          <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+            站点概览
+          </li>
+        </ul>
+      
+
+      <section class="site-overview-wrap sidebar-panel">
+        <div class="site-overview">
+          <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+            
+              <p class="site-author-name" itemprop="name">博</p>
+              <p class="site-description motion-element" itemprop="description"></p>
+          </div>
+
+          <nav class="site-state motion-element">
+
+            
+              <div class="site-state-item site-state-posts">
+              
+                <a href="/archives/">
+              
+                  <span class="site-state-item-count">134</span>
+                  <span class="site-state-item-name">日志</span>
+                </a>
+              </div>
+            
+
+            
+              
+              
+              <div class="site-state-item site-state-categories">
+                <a href="/categories/index.html">
+                  <span class="site-state-item-count">20</span>
+                  <span class="site-state-item-name">分类</span>
+                </a>
+              </div>
+            
+
+            
+              
+              
+              <div class="site-state-item site-state-tags">
+                <a href="/tags/index.html">
+                  <span class="site-state-item-count">116</span>
+                  <span class="site-state-item-name">标签</span>
+                </a>
+              </div>
+            
+
+          </nav>
+
+          
+
+          
+
+          
+          
+
+          
+          
+
+          
+
+        </div>
+      </section>
+
+      
+      <!--noindex-->
+        <section class="post-toc-wrap motion-element sidebar-panel sidebar-panel-active">
+          <div class="post-toc">
+
+            
+              
+            
+
+            
+              <div class="post-toc-content"><ol class="nav"><li class="nav-item nav-level-1"><a class="nav-link" href="#使用"><span class="nav-number">1.</span> <span class="nav-text">使用</span></a><ol class="nav-child"><li class="nav-item nav-level-2"><a class="nav-link" href="#环境"><span class="nav-number">1.1.</span> <span class="nav-text">环境</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#安装"><span class="nav-number">1.2.</span> <span class="nav-text">安装</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#配置"><span class="nav-number">1.3.</span> <span class="nav-text">配置</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#ansible-配置"><span class="nav-number">1.3.1.</span> <span class="nav-text">ansible 配置</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#ceph-ansible-配置"><span class="nav-number">1.3.2.</span> <span class="nav-text">ceph-ansible 配置</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#配置-all-yml"><span class="nav-number">1.3.2.1.</span> <span class="nav-text">配置 all.yml</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#配置-osds-yml"><span class="nav-number">1.3.2.2.</span> <span class="nav-text">配置 osds.yml</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#配置-mgrs-yml"><span class="nav-number">1.3.2.3.</span> <span class="nav-text">配置 mgrs.yml</span></a></li></ol></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#部署"><span class="nav-number">1.4.</span> <span class="nav-text">部署</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#集群初始化部署"><span class="nav-number">1.4.1.</span> <span class="nav-text">集群初始化部署</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#增加OSD节点部署"><span class="nav-number">1.4.2.</span> <span class="nav-text">增加OSD节点部署</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#清除集群部署"><span class="nav-number">1.4.3.</span> <span class="nav-text">清除集群部署</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#Ceph配置文件分发"><span class="nav-number">1.4.4.</span> <span class="nav-text">Ceph配置文件分发</span></a></li></ol></li></ol></li><li class="nav-item nav-level-1"><a class="nav-link" href="#参考-amp-鸣谢"><span class="nav-number">2.</span> <span class="nav-text">参考&amp;鸣谢</span></a></li></ol></div>
+            
+
+          </div>
+        </section>
+      <!--/noindex-->
+      
+
+      
+
+    </div>
+  </aside>
+
+
+        
+      </div>
+    </main>
+
+    <footer id="footer" class="footer">
+      <div class="footer-inner">
+        <div class="copyright">&copy; <span itemprop="copyrightYear">2021</span>
+  <span class="with-love">
+    <i class="fa fa-user"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">博</span>
+
+  
+</div>
+
+
+  <div class="powered-by">由 <a class="theme-link" target="_blank" href="https://hexo.io">Hexo</a> 强力驱动</div>
+
+
+
+  <span class="post-meta-divider">|</span>
+
+
+
+  <div class="theme-info">主题 &mdash; <a class="theme-link" target="_blank" href="https://github.com/iissnan/hexo-theme-next">NexT.Gemini</a> v5.1.4</div>
+
+
+
+
+        
+
+
+
+
+
+
+
+        
+      </div>
+    </footer>
+
+    
+      <div class="back-to-top">
+        <i class="fa fa-arrow-up"></i>
+        
+      </div>
+    
+
+    
+
+  </div>
+
+  
+
+<script type="text/javascript">
+  if (Object.prototype.toString.call(window.Promise) !== '[object Function]') {
+    window.Promise = null;
+  }
+</script>
+
+
+
+
+
+
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+  
+  
+    <script type="text/javascript" src="/lib/jquery/index.js?v=2.1.3"></script>
+  
+
+  
+  
+    <script type="text/javascript" src="/lib/fastclick/lib/fastclick.min.js?v=1.0.6"></script>
+  
+
+  
+  
+    <script type="text/javascript" src="/lib/jquery_lazyload/jquery.lazyload.js?v=1.9.7"></script>
+  
+
+  
+  
+    <script type="text/javascript" src="/lib/velocity/velocity.min.js?v=1.2.1"></script>
+  
+
+  
+  
+    <script type="text/javascript" src="/lib/velocity/velocity.ui.min.js?v=1.2.1"></script>
+  
+
+  
+  
+    <script type="text/javascript" src="/lib/fancybox/source/jquery.fancybox.pack.js?v=2.1.5"></script>
+  
+
+
+  
+
+
+  <script type="text/javascript" src="/js/src/utils.js?v=5.1.4"></script>
+
+  <script type="text/javascript" src="/js/src/motion.js?v=5.1.4"></script>
+
+
+
+  
+  
+
+
+  <script type="text/javascript" src="/js/src/affix.js?v=5.1.4"></script>
+
+  <script type="text/javascript" src="/js/src/schemes/pisces.js?v=5.1.4"></script>
+
+
+
+  
+  <script type="text/javascript" src="/js/src/scrollspy.js?v=5.1.4"></script>
+<script type="text/javascript" src="/js/src/post-details.js?v=5.1.4"></script>
+
+
+
+  
+
+
+  <script type="text/javascript" src="/js/src/bootstrap.js?v=5.1.4"></script>
+
+
+
+  
+
+
+  
+
+
+
+
+	
+
+
+
+
+
+  
+
+
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+  <script src="//cdn1.lncld.net/static/js/3.0.4/av-min.js"></script>
+  <script src="//unpkg.com/valine/dist/Valine.min.js"></script>
+  
+  <script type="text/javascript">
+    var GUEST = ['nick','mail','link'];
+    var guest = 'nick,mail,link';
+    guest = guest.split(',').filter(item=>{
+      return GUEST.indexOf(item)>-1;
+    });
+    new Valine({
+        el: '#comments' ,
+        verify: false,
+        notify: false,
+        appId: 'PrJuolBVUJouwFAAIeEFAN7Q-gzGzoHsz',
+        appKey: 'C2Jc1LswoSpNO3opFC5K6Yd7',
+        placeholder: 'Just go go',
+        avatar:'mm',
+        guest_info:guest,
+        pageSize:'10' || 10,
+    });
+  </script>
+
+
+
+  
+
+  <script type="text/javascript">
+    // Popup Window;
+    var isfetched = false;
+    var isXml = true;
+    // Search DB path;
+    var search_path = "search.xml";
+    if (search_path.length === 0) {
+      search_path = "search.xml";
+    } else if (/json$/i.test(search_path)) {
+      isXml = false;
+    }
+    var path = "/" + search_path;
+    // monitor main search box;
+
+    var onPopupClose = function (e) {
+      $('.popup').hide();
+      $('#local-search-input').val('');
+      $('.search-result-list').remove();
+      $('#no-result').remove();
+      $(".local-search-pop-overlay").remove();
+      $('body').css('overflow', '');
+    }
+
+    function proceedsearch() {
+      $("body")
+        .append('<div class="search-popup-overlay local-search-pop-overlay"></div>')
+        .css('overflow', 'hidden');
+      $('.search-popup-overlay').click(onPopupClose);
+      $('.popup').toggle();
+      var $localSearchInput = $('#local-search-input');
+      $localSearchInput.attr("autocapitalize", "none");
+      $localSearchInput.attr("autocorrect", "off");
+      $localSearchInput.focus();
+    }
+
+    // search function;
+    var searchFunc = function(path, search_id, content_id) {
+      'use strict';
+
+      // start loading animation
+      $("body")
+        .append('<div class="search-popup-overlay local-search-pop-overlay">' +
+          '<div id="search-loading-icon">' +
+          '<i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>' +
+          '</div>' +
+          '</div>')
+        .css('overflow', 'hidden');
+      $("#search-loading-icon").css('margin', '20% auto 0 auto').css('text-align', 'center');
+
+      $.ajax({
+        url: path,
+        dataType: isXml ? "xml" : "json",
+        async: true,
+        success: function(res) {
+          // get the contents from search data
+          isfetched = true;
+          $('.popup').detach().appendTo('.header-inner');
+          var datas = isXml ? $("entry", res).map(function() {
+            return {
+              title: $("title", this).text(),
+              content: $("content",this).text(),
+              url: $("url" , this).text()
+            };
+          }).get() : res;
+          var input = document.getElementById(search_id);
+          var resultContent = document.getElementById(content_id);
+          var inputEventFunction = function() {
+            var searchText = input.value.trim().toLowerCase();
+            var keywords = searchText.split(/[\s\-]+/);
+            if (keywords.length > 1) {
+              keywords.push(searchText);
+            }
+            var resultItems = [];
+            if (searchText.length > 0) {
+              // perform local searching
+              datas.forEach(function(data) {
+                var isMatch = false;
+                var hitCount = 0;
+                var searchTextCount = 0;
+                var title = data.title.trim();
+                var titleInLowerCase = title.toLowerCase();
+                var content = data.content.trim().replace(/<[^>]+>/g,"");
+                var contentInLowerCase = content.toLowerCase();
+                var articleUrl = decodeURIComponent(data.url);
+                var indexOfTitle = [];
+                var indexOfContent = [];
+                // only match articles with not empty titles
+                if(title != '') {
+                  keywords.forEach(function(keyword) {
+                    function getIndexByWord(word, text, caseSensitive) {
+                      var wordLen = word.length;
+                      if (wordLen === 0) {
+                        return [];
+                      }
+                      var startPosition = 0, position = [], index = [];
+                      if (!caseSensitive) {
+                        text = text.toLowerCase();
+                        word = word.toLowerCase();
+                      }
+                      while ((position = text.indexOf(word, startPosition)) > -1) {
+                        index.push({position: position, word: word});
+                        startPosition = position + wordLen;
+                      }
+                      return index;
+                    }
+
+                    indexOfTitle = indexOfTitle.concat(getIndexByWord(keyword, titleInLowerCase, false));
+                    indexOfContent = indexOfContent.concat(getIndexByWord(keyword, contentInLowerCase, false));
+                  });
+                  if (indexOfTitle.length > 0 || indexOfContent.length > 0) {
+                    isMatch = true;
+                    hitCount = indexOfTitle.length + indexOfContent.length;
+                  }
+                }
+
+                // show search results
+
+                if (isMatch) {
+                  // sort index by position of keyword
+
+                  [indexOfTitle, indexOfContent].forEach(function (index) {
+                    index.sort(function (itemLeft, itemRight) {
+                      if (itemRight.position !== itemLeft.position) {
+                        return itemRight.position - itemLeft.position;
+                      } else {
+                        return itemLeft.word.length - itemRight.word.length;
+                      }
+                    });
+                  });
+
+                  // merge hits into slices
+
+                  function mergeIntoSlice(text, start, end, index) {
+                    var item = index[index.length - 1];
+                    var position = item.position;
+                    var word = item.word;
+                    var hits = [];
+                    var searchTextCountInSlice = 0;
+                    while (position + word.length <= end && index.length != 0) {
+                      if (word === searchText) {
+                        searchTextCountInSlice++;
+                      }
+                      hits.push({position: position, length: word.length});
+                      var wordEnd = position + word.length;
+
+                      // move to next position of hit
+
+                      index.pop();
+                      while (index.length != 0) {
+                        item = index[index.length - 1];
+                        position = item.position;
+                        word = item.word;
+                        if (wordEnd > position) {
+                          index.pop();
+                        } else {
+                          break;
+                        }
+                      }
+                    }
+                    searchTextCount += searchTextCountInSlice;
+                    return {
+                      hits: hits,
+                      start: start,
+                      end: end,
+                      searchTextCount: searchTextCountInSlice
+                    };
+                  }
+
+                  var slicesOfTitle = [];
+                  if (indexOfTitle.length != 0) {
+                    slicesOfTitle.push(mergeIntoSlice(title, 0, title.length, indexOfTitle));
+                  }
+
+                  var slicesOfContent = [];
+                  while (indexOfContent.length != 0) {
+                    var item = indexOfContent[indexOfContent.length - 1];
+                    var position = item.position;
+                    var word = item.word;
+                    // cut out 100 characters
+                    var start = position - 20;
+                    var end = position + 80;
+                    if(start < 0){
+                      start = 0;
+                    }
+                    if (end < position + word.length) {
+                      end = position + word.length;
+                    }
+                    if(end > content.length){
+                      end = content.length;
+                    }
+                    slicesOfContent.push(mergeIntoSlice(content, start, end, indexOfContent));
+                  }
+
+                  // sort slices in content by search text's count and hits' count
+
+                  slicesOfContent.sort(function (sliceLeft, sliceRight) {
+                    if (sliceLeft.searchTextCount !== sliceRight.searchTextCount) {
+                      return sliceRight.searchTextCount - sliceLeft.searchTextCount;
+                    } else if (sliceLeft.hits.length !== sliceRight.hits.length) {
+                      return sliceRight.hits.length - sliceLeft.hits.length;
+                    } else {
+                      return sliceLeft.start - sliceRight.start;
+                    }
+                  });
+
+                  // select top N slices in content
+
+                  var upperBound = parseInt('1');
+                  if (upperBound >= 0) {
+                    slicesOfContent = slicesOfContent.slice(0, upperBound);
+                  }
+
+                  // highlight title and content
+
+                  function highlightKeyword(text, slice) {
+                    var result = '';
+                    var prevEnd = slice.start;
+                    slice.hits.forEach(function (hit) {
+                      result += text.substring(prevEnd, hit.position);
+                      var end = hit.position + hit.length;
+                      result += '<b class="search-keyword">' + text.substring(hit.position, end) + '</b>';
+                      prevEnd = end;
+                    });
+                    result += text.substring(prevEnd, slice.end);
+                    return result;
+                  }
+
+                  var resultItem = '';
+
+                  if (slicesOfTitle.length != 0) {
+                    resultItem += "<li><a href='" + articleUrl + "' class='search-result-title'>" + highlightKeyword(title, slicesOfTitle[0]) + "</a>";
+                  } else {
+                    resultItem += "<li><a href='" + articleUrl + "' class='search-result-title'>" + title + "</a>";
+                  }
+
+                  slicesOfContent.forEach(function (slice) {
+                    resultItem += "<a href='" + articleUrl + "'>" +
+                      "<p class=\"search-result\">" + highlightKeyword(content, slice) +
+                      "...</p>" + "</a>";
+                  });
+
+                  resultItem += "</li>";
+                  resultItems.push({
+                    item: resultItem,
+                    searchTextCount: searchTextCount,
+                    hitCount: hitCount,
+                    id: resultItems.length
+                  });
+                }
+              })
+            };
+            if (keywords.length === 1 && keywords[0] === "") {
+              resultContent.innerHTML = '<div id="no-result"><i class="fa fa-search fa-5x" /></div>'
+            } else if (resultItems.length === 0) {
+              resultContent.innerHTML = '<div id="no-result"><i class="fa fa-frown-o fa-5x" /></div>'
+            } else {
+              resultItems.sort(function (resultLeft, resultRight) {
+                if (resultLeft.searchTextCount !== resultRight.searchTextCount) {
+                  return resultRight.searchTextCount - resultLeft.searchTextCount;
+                } else if (resultLeft.hitCount !== resultRight.hitCount) {
+                  return resultRight.hitCount - resultLeft.hitCount;
+                } else {
+                  return resultRight.id - resultLeft.id;
+                }
+              });
+              var searchResultList = '<ul class=\"search-result-list\">';
+              resultItems.forEach(function (result) {
+                searchResultList += result.item;
+              })
+              searchResultList += "</ul>";
+              resultContent.innerHTML = searchResultList;
+            }
+          }
+
+          if ('auto' === 'auto') {
+            input.addEventListener('input', inputEventFunction);
+          } else {
+            $('.search-icon').click(inputEventFunction);
+            input.addEventListener('keypress', function (event) {
+              if (event.keyCode === 13) {
+                inputEventFunction();
+              }
+            });
+          }
+
+          // remove loading animation
+          $(".local-search-pop-overlay").remove();
+          $('body').css('overflow', '');
+
+          proceedsearch();
+        }
+      });
+    }
+
+    // handle and trigger popup window;
+    $('.popup-trigger').click(function(e) {
+      e.stopPropagation();
+      if (isfetched === false) {
+        searchFunc(path, 'local-search-input', 'local-search-result');
+      } else {
+        proceedsearch();
+      };
+    });
+
+    $('.popup-btn-close').click(onPopupClose);
+    $('.popup').click(function(e){
+      e.stopPropagation();
+    });
+    $(document).on('keyup', function (event) {
+      var shouldDismissSearchPopup = event.which === 27 &&
+        $('.search-popup').is(':visible');
+      if (shouldDismissSearchPopup) {
+        onPopupClose();
+      }
+    });
+  </script>
+
+
+
+
+
+  
+
+  
+
+  
+
+  
+  
+
+  
+
+  
+
+  
+
+</body>
+</html>
