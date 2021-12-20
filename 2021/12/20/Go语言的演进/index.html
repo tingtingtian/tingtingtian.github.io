@@ -79,19 +79,19 @@
 
 
 
-<meta name="description" content="Go语言诞生于2007年，兴起于2015年Go1.5发布之后，16年大热。 1、这是什么原因呢？主要是重新设计优化 GC 实现。1.5后也实现了完全使用 Go 语言自身进行编写。 云原生的兴起。Go 语言天生就是为云而生的，在容器中运行时，没有遗留负担。 （Go 语言在 1.3-1.9 的版本更新，都把 GC 放在重要的改进点上。对于 GC 重新优化实现之后，并且迭代了几个版本，在目前来说，对生产">
+<meta name="description" content="Go语言诞生于2007年，兴起于2015年Go1.5发布之后，16年大热。 这是什么原因呢？主要是重新设计优化 GC 实现。1.5后也实现了完全使用 Go 语言自身进行编写。 云原生的兴起。Go 语言天生就是为云而生的，在容器中运行时，没有遗留负担。 （Go 语言在 1.3-1.9 的版本更新，都把 GC 放在重要的改进点上。对于 GC 重新优化实现之后，并且迭代了几个版本，在目前来说，对生产环境">
 <meta name="keywords" content="golang">
 <meta property="og:type" content="article">
 <meta property="og:title" content="Go语言的演进">
 <meta property="og:url" content="http://yoursite.com/2021/12/20/Go语言的演进/index.html">
 <meta property="og:site_name" content="Tlog">
-<meta property="og:description" content="Go语言诞生于2007年，兴起于2015年Go1.5发布之后，16年大热。 1、这是什么原因呢？主要是重新设计优化 GC 实现。1.5后也实现了完全使用 Go 语言自身进行编写。 云原生的兴起。Go 语言天生就是为云而生的，在容器中运行时，没有遗留负担。 （Go 语言在 1.3-1.9 的版本更新，都把 GC 放在重要的改进点上。对于 GC 重新优化实现之后，并且迭代了几个版本，在目前来说，对生产">
+<meta property="og:description" content="Go语言诞生于2007年，兴起于2015年Go1.5发布之后，16年大热。 这是什么原因呢？主要是重新设计优化 GC 实现。1.5后也实现了完全使用 Go 语言自身进行编写。 云原生的兴起。Go 语言天生就是为云而生的，在容器中运行时，没有遗留负担。 （Go 语言在 1.3-1.9 的版本更新，都把 GC 放在重要的改进点上。对于 GC 重新优化实现之后，并且迭代了几个版本，在目前来说，对生产环境">
 <meta property="og:locale" content="zh-Hans">
 <meta property="og:image" content="http://yoursite.com/images/golang/base/yunyuansheng.jpg">
-<meta property="og:updated_time" content="2021-12-20T02:48:04.775Z">
+<meta property="og:updated_time" content="2021-12-20T09:17:30.158Z">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Go语言的演进">
-<meta name="twitter:description" content="Go语言诞生于2007年，兴起于2015年Go1.5发布之后，16年大热。 1、这是什么原因呢？主要是重新设计优化 GC 实现。1.5后也实现了完全使用 Go 语言自身进行编写。 云原生的兴起。Go 语言天生就是为云而生的，在容器中运行时，没有遗留负担。 （Go 语言在 1.3-1.9 的版本更新，都把 GC 放在重要的改进点上。对于 GC 重新优化实现之后，并且迭代了几个版本，在目前来说，对生产">
+<meta name="twitter:description" content="Go语言诞生于2007年，兴起于2015年Go1.5发布之后，16年大热。 这是什么原因呢？主要是重新设计优化 GC 实现。1.5后也实现了完全使用 Go 语言自身进行编写。 云原生的兴起。Go 语言天生就是为云而生的，在容器中运行时，没有遗留负担。 （Go 语言在 1.3-1.9 的版本更新，都把 GC 放在重要的改进点上。对于 GC 重新优化实现之后，并且迭代了几个版本，在目前来说，对生产环境">
 <meta name="twitter:image" content="http://yoursite.com/images/golang/base/yunyuansheng.jpg">
 
 
@@ -399,17 +399,17 @@
 
       
         <p>Go语言诞生于2007年，兴起于2015年Go1.5发布之后，16年大热。</p>
-<h2 id="1、这是什么原因呢？"><a href="#1、这是什么原因呢？" class="headerlink" title="1、这是什么原因呢？"></a>1、这是什么原因呢？</h2><p>主要是重新设计优化 GC 实现。1.5后也实现了完全使用 Go 语言自身进行编写。</p>
+<h2 id="这是什么原因呢？"><a href="#这是什么原因呢？" class="headerlink" title="这是什么原因呢？"></a>这是什么原因呢？</h2><p>主要是重新设计优化 GC 实现。1.5后也实现了完全使用 Go 语言自身进行编写。</p>
 <p>云原生的兴起。Go 语言天生就是为云而生的，在容器中运行时，没有遗留负担。</p>
 <p>（Go 语言在 1.3-1.9 的版本更新，都把 GC 放在重要的改进点上。对于 GC 重新优化实现之后，并且迭代了几个版本，在目前来说，对生产环境中大部分使用 JDK7 或者 JDK8 场景下，对比使用 Go 语言的 1.9 版本，还是 Go 语言上的体验会更好一些。）括号里是废话。</p>
-<h2 id="2、GC需要做什么呢？"><a href="#2、GC需要做什么呢？" class="headerlink" title="2、GC需要做什么呢？"></a>2、GC需要做什么呢？</h2><p>GC(自动内存管理机制)需要确定<strong>哪些内存需要回收，什么时候回收，怎么回收</strong></p>
+<h2 id="GC需要做什么呢？"><a href="#GC需要做什么呢？" class="headerlink" title="GC需要做什么呢？"></a>GC需要做什么呢？</h2><p>GC(自动内存管理机制)需要确定<strong>哪些内存需要回收，什么时候回收，怎么回收</strong></p>
 <p>在Go中栈上内存仍由编译器负责管理回收，而堆上的内存由编译器和垃圾收集器负责管理回收。</p>
 <h3 id="如何确定哪些内存需要回收？"><a href="#如何确定哪些内存需要回收？" class="headerlink" title="如何确定哪些内存需要回收？"></a>如何确定哪些内存需要回收？</h3><p>利用可达性分析的方法来确认哪些内存需要回收</p>
 <h3 id="什么时候回收？"><a href="#什么时候回收？" class="headerlink" title="什么时候回收？"></a>什么时候回收？</h3><p>触发GC有俩个条件:</p>
 <p>一是堆内存的分配达到控制器计算的触发堆大小，初始大小环境变量GOGC，之后堆内存达到上一次垃圾收集的 2 倍时才会触发GC。</p>
 <p>二是如果一定时间内没有触发，就会触发新的循环，该触发条件由runtime.forcegcperiod变量控制，默认为 2 分钟。</p>
 <h3 id="怎么回收"><a href="#怎么回收" class="headerlink" title="怎么回收"></a>怎么回收</h3><p>Go1.3的时候，用的是标记回收算法。Go1.5的时候，用的是三色标记法。Go1.8的时候采用的是三色标记+混合写屏障</p>
-<h2 id="3、GC优化的历程"><a href="#3、GC优化的历程" class="headerlink" title="3、GC优化的历程"></a>3、GC优化的历程</h2><h3 id="Go-V1-3-之前，采用标记清除算法。"><a href="#Go-V1-3-之前，采用标记清除算法。" class="headerlink" title="Go V1.3 之前，采用标记清除算法。"></a>Go V1.3 之前，采用标记清除算法。</h3><p>算法步骤如下：</p>
+<h2 id="GC优化的历程"><a href="#GC优化的历程" class="headerlink" title="GC优化的历程"></a>GC优化的历程</h2><h3 id="Go-V1-3-之前，采用标记清除算法。"><a href="#Go-V1-3-之前，采用标记清除算法。" class="headerlink" title="Go V1.3 之前，采用标记清除算法。"></a>Go V1.3 之前，采用标记清除算法。</h3><p>算法步骤如下：</p>
 <ul>
 <li>标记(Mark phase)</li>
 <li>清除(Sweep phase)</li>
@@ -449,7 +449,7 @@
 <p>GoV1.5- 三色标记法， 堆空间启动写屏障，栈空间不启动，全部扫描之后，需要重新扫描一次栈(需要STW)，效率普通</p>
 <p>GoV1.8-三色标记法，混合写屏障机制， 栈空间不启动，堆空间启动。整个过程几乎不需要STW，效率较高。</p>
 <p><strong>之后可以拓展到TCmalloc算法（内存管理器）</strong></p>
-<h2 id="4、云原生"><a href="#4、云原生" class="headerlink" title="4、云原生"></a>4、云原生</h2><p>云原生的要点可以概括为：DevOps+持续交付+微服务+容器。</p>
+<h2 id="云原生"><a href="#云原生" class="headerlink" title="云原生"></a>云原生</h2><p>云原生的要点可以概括为：DevOps+持续交付+微服务+容器。</p>
 <p>云原生技术有利于各组织在公有云、私有云和混合云等新型动态环境中，构建和运行可弹性扩展的应用。<br>云原生的代表技术包括容器、服务网格、微服务、不可变基础设施和声明式 API。</p>
 <p><img src="/images/golang/base/yunyuansheng.jpg" alt="avatar"></p>
 <h3 id="DevOps"><a href="#DevOps" class="headerlink" title="DevOps:"></a>DevOps:</h3><ul>
@@ -471,7 +471,7 @@
 <li>微服务的最佳载体</li>
 </ul>
 <p>不是划分为不同的操作系统，而是在操作系统上划分为不同的“运行环境”（Container），占用资源更少，部署速度更快。</p>
-<h2 id="5、Go语言的优略势："><a href="#5、Go语言的优略势：" class="headerlink" title="5、Go语言的优略势："></a>5、Go语言的优略势：</h2><h3 id="Go-语言的核心优势"><a href="#Go-语言的核心优势" class="headerlink" title="Go 语言的核心优势"></a>Go 语言的核心优势</h3><ul>
+<h2 id="Go语言的优略势："><a href="#Go语言的优略势：" class="headerlink" title="Go语言的优略势："></a>Go语言的优略势：</h2><h3 id="Go-语言的核心优势"><a href="#Go-语言的核心优势" class="headerlink" title="Go 语言的核心优势"></a>Go 语言的核心优势</h3><ul>
 <li>高速的效率</li>
 <li>易学习，成本低</li>
 <li>强大的标准库</li>
@@ -553,8 +553,8 @@
         <div class="post-nav">
           <div class="post-nav-next post-nav-item">
             
-              <a href="/2021/12/18/debug及性能问题实践/" rel="next" title="debug以及性能实践">
-                <i class="fa fa-chevron-left"></i> debug以及性能实践
+              <a href="/2021/12/18/etcd入门/" rel="next" title="etcd 入门">
+                <i class="fa fa-chevron-left"></i> etcd 入门
               </a>
             
           </div>
@@ -645,7 +645,7 @@
               
                 <a href="/archives/">
               
-                  <span class="site-state-item-count">10</span>
+                  <span class="site-state-item-count">12</span>
                   <span class="site-state-item-name">日志</span>
                 </a>
               </div>
@@ -656,7 +656,7 @@
               
               <div class="site-state-item site-state-categories">
                 <a href="/categories/index.html">
-                  <span class="site-state-item-count">3</span>
+                  <span class="site-state-item-count">5</span>
                   <span class="site-state-item-name">分类</span>
                 </a>
               </div>
@@ -667,7 +667,7 @@
               
               <div class="site-state-item site-state-tags">
                 <a href="/tags/index.html">
-                  <span class="site-state-item-count">3</span>
+                  <span class="site-state-item-count">5</span>
                   <span class="site-state-item-name">标签</span>
                 </a>
               </div>
@@ -700,7 +700,7 @@
             
 
             
-              <div class="post-toc-content"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#1、这是什么原因呢？"><span class="nav-number">1.</span> <span class="nav-text">1、这是什么原因呢？</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#2、GC需要做什么呢？"><span class="nav-number">2.</span> <span class="nav-text">2、GC需要做什么呢？</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#如何确定哪些内存需要回收？"><span class="nav-number">2.1.</span> <span class="nav-text">如何确定哪些内存需要回收？</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#什么时候回收？"><span class="nav-number">2.2.</span> <span class="nav-text">什么时候回收？</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#怎么回收"><span class="nav-number">2.3.</span> <span class="nav-text">怎么回收</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#3、GC优化的历程"><span class="nav-number">3.</span> <span class="nav-text">3、GC优化的历程</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#Go-V1-3-之前，采用标记清除算法。"><span class="nav-number">3.1.</span> <span class="nav-text">Go V1.3 之前，采用标记清除算法。</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#Go-V1-5-的三色并发标记法"><span class="nav-number">3.2.</span> <span class="nav-text">Go V1.5 的三色并发标记法</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#Go-V1-8-的三色标记-混合写屏障-hybrid-write-barrier-机制"><span class="nav-number">3.3.</span> <span class="nav-text">Go V1.8 的三色标记+混合写屏障(hybrid write barrier)机制</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#屏障机制："><span class="nav-number">3.3.1.</span> <span class="nav-text">屏障机制：</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#短板："><span class="nav-number">3.3.2.</span> <span class="nav-text">短板：</span></a></li></ol></li><li class="nav-item nav-level-3"><a class="nav-link" href="#总结"><span class="nav-number">3.4.</span> <span class="nav-text">总结:</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#4、云原生"><span class="nav-number">4.</span> <span class="nav-text">4、云原生</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#DevOps"><span class="nav-number">4.1.</span> <span class="nav-text">DevOps:</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#持续交付"><span class="nav-number">4.2.</span> <span class="nav-text">持续交付:</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#微服务"><span class="nav-number">4.3.</span> <span class="nav-text">微服务:</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#容器"><span class="nav-number">4.4.</span> <span class="nav-text">容器:</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#5、Go语言的优略势："><span class="nav-number">5.</span> <span class="nav-text">5、Go语言的优略势：</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#Go-语言的核心优势"><span class="nav-number">5.1.</span> <span class="nav-text">Go 语言的核心优势</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#GO语言的缺点"><span class="nav-number">5.2.</span> <span class="nav-text">GO语言的缺点:</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#GO语言的使用项目"><span class="nav-number">5.3.</span> <span class="nav-text">GO语言的使用项目</span></a></li></ol></li></ol></div>
+              <div class="post-toc-content"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#这是什么原因呢？"><span class="nav-number">1.</span> <span class="nav-text">这是什么原因呢？</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#GC需要做什么呢？"><span class="nav-number">2.</span> <span class="nav-text">GC需要做什么呢？</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#如何确定哪些内存需要回收？"><span class="nav-number">2.1.</span> <span class="nav-text">如何确定哪些内存需要回收？</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#什么时候回收？"><span class="nav-number">2.2.</span> <span class="nav-text">什么时候回收？</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#怎么回收"><span class="nav-number">2.3.</span> <span class="nav-text">怎么回收</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#GC优化的历程"><span class="nav-number">3.</span> <span class="nav-text">GC优化的历程</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#Go-V1-3-之前，采用标记清除算法。"><span class="nav-number">3.1.</span> <span class="nav-text">Go V1.3 之前，采用标记清除算法。</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#Go-V1-5-的三色并发标记法"><span class="nav-number">3.2.</span> <span class="nav-text">Go V1.5 的三色并发标记法</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#Go-V1-8-的三色标记-混合写屏障-hybrid-write-barrier-机制"><span class="nav-number">3.3.</span> <span class="nav-text">Go V1.8 的三色标记+混合写屏障(hybrid write barrier)机制</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#屏障机制："><span class="nav-number">3.3.1.</span> <span class="nav-text">屏障机制：</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#短板："><span class="nav-number">3.3.2.</span> <span class="nav-text">短板：</span></a></li></ol></li><li class="nav-item nav-level-3"><a class="nav-link" href="#总结"><span class="nav-number">3.4.</span> <span class="nav-text">总结:</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#云原生"><span class="nav-number">4.</span> <span class="nav-text">云原生</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#DevOps"><span class="nav-number">4.1.</span> <span class="nav-text">DevOps:</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#持续交付"><span class="nav-number">4.2.</span> <span class="nav-text">持续交付:</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#微服务"><span class="nav-number">4.3.</span> <span class="nav-text">微服务:</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#容器"><span class="nav-number">4.4.</span> <span class="nav-text">容器:</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#Go语言的优略势："><span class="nav-number">5.</span> <span class="nav-text">Go语言的优略势：</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#Go-语言的核心优势"><span class="nav-number">5.1.</span> <span class="nav-text">Go 语言的核心优势</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#GO语言的缺点"><span class="nav-number">5.2.</span> <span class="nav-text">GO语言的缺点:</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#GO语言的使用项目"><span class="nav-number">5.3.</span> <span class="nav-text">GO语言的使用项目</span></a></li></ol></li></ol></div>
             
 
           </div>
