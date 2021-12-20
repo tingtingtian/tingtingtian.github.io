@@ -79,20 +79,23 @@
 
 
 
-<meta name="description" content="知识点1：defer的执行顺序 多个defer出现的时候，它是一个“栈”的关系，也就是先进后出。一个函数中，写在前面的defer会比写在后面的defer调用的晚。 知识点2：defer和return的执行顺序 return之后的语句先执行，defer后的语句后执行 知识点3：函数的返回值初始化 123456789101112131415161718package mainimport &amp;quot;">
+<meta name="description" content="单线程时代单进程时代不需要调度器，一切串行（存在阻塞问题） 多进程、线程时代多进程时代、线程时代有了调度器（解决了阻塞，进程拥有太多的资源，进程的创建、切换、销毁，都会占用很长的时间，CPU虽然利用起来了，但如果进程过多，CPU有很大的一部分都被用来进行进程调度了。）   设计线程、解决锁、竞争冲突  —–》CPU的利用率低，需要提高CPU的利用率 多进程、多线程已经提高了系统的并发能力，但是在当">
 <meta name="keywords" content="golang">
 <meta property="og:type" content="article">
-<meta property="og:title" content="defer执行顺序">
-<meta property="og:url" content="http://yoursite.com/2021/12/18/defer执行顺序/index.html">
+<meta property="og:title" content="Go语言的协程调度原理和GMP设计">
+<meta property="og:url" content="http://yoursite.com/2021/12/18/Go语言GMP模型/index.html">
 <meta property="og:site_name" content="Tlog">
-<meta property="og:description" content="知识点1：defer的执行顺序 多个defer出现的时候，它是一个“栈”的关系，也就是先进后出。一个函数中，写在前面的defer会比写在后面的defer调用的晚。 知识点2：defer和return的执行顺序 return之后的语句先执行，defer后的语句后执行 知识点3：函数的返回值初始化 123456789101112131415161718package mainimport &amp;quot;">
+<meta property="og:description" content="单线程时代单进程时代不需要调度器，一切串行（存在阻塞问题） 多进程、线程时代多进程时代、线程时代有了调度器（解决了阻塞，进程拥有太多的资源，进程的创建、切换、销毁，都会占用很长的时间，CPU虽然利用起来了，但如果进程过多，CPU有很大的一部分都被用来进行进程调度了。）   设计线程、解决锁、竞争冲突  —–》CPU的利用率低，需要提高CPU的利用率 多进程、多线程已经提高了系统的并发能力，但是在当">
 <meta property="og:locale" content="zh-Hans">
-<meta property="og:image" content="http://yoursite.com/images/golang/base/114-defer.jpeg">
-<meta property="og:updated_time" content="2021-12-18T08:43:07.118Z">
+<meta property="og:image" content="http://yoursite.com/images/golang/goroutine/14-old.png">
+<meta property="og:image" content="http://yoursite.com/images/golang/goroutine/16-gmp.jpg">
+<meta property="og:image" content="http://yoursite.com/images/golang/goroutine/18-go-func.jpeg">
+<meta property="og:image" content="http://yoursite.com/images/golang/goroutine/17-pic-go.png">
+<meta property="og:updated_time" content="2021-12-20T06:59:58.436Z">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="defer执行顺序">
-<meta name="twitter:description" content="知识点1：defer的执行顺序 多个defer出现的时候，它是一个“栈”的关系，也就是先进后出。一个函数中，写在前面的defer会比写在后面的defer调用的晚。 知识点2：defer和return的执行顺序 return之后的语句先执行，defer后的语句后执行 知识点3：函数的返回值初始化 123456789101112131415161718package mainimport &amp;quot;">
-<meta name="twitter:image" content="http://yoursite.com/images/golang/base/114-defer.jpeg">
+<meta name="twitter:title" content="Go语言的协程调度原理和GMP设计">
+<meta name="twitter:description" content="单线程时代单进程时代不需要调度器，一切串行（存在阻塞问题） 多进程、线程时代多进程时代、线程时代有了调度器（解决了阻塞，进程拥有太多的资源，进程的创建、切换、销毁，都会占用很长的时间，CPU虽然利用起来了，但如果进程过多，CPU有很大的一部分都被用来进行进程调度了。）   设计线程、解决锁、竞争冲突  —–》CPU的利用率低，需要提高CPU的利用率 多进程、多线程已经提高了系统的并发能力，但是在当">
+<meta name="twitter:image" content="http://yoursite.com/images/golang/goroutine/14-old.png">
 
 
 
@@ -122,7 +125,7 @@
 
 
 
-  <link rel="canonical" href="http://yoursite.com/2021/12/18/defer执行顺序/">
+  <link rel="canonical" href="http://yoursite.com/2021/12/18/Go语言GMP模型/">
 
 
 
@@ -130,7 +133,7 @@
 
 <script data-ad-client="ca-pub-7938886583915179" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
 
-  <title>defer执行顺序 | Tlog</title>
+  <title>Go语言的协程调度原理和GMP设计 | Tlog</title>
   
 
 
@@ -299,7 +302,7 @@
   
   
   <div class="post-block">
-    <link itemprop="mainEntityOfPage" href="http://yoursite.com/2021/12/18/defer执行顺序/">
+    <link itemprop="mainEntityOfPage" href="http://yoursite.com/2021/12/18/Go语言GMP模型/">
 
     <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
       <meta itemprop="name" content="婷">
@@ -316,7 +319,7 @@
 
         
         
-          <h1 class="post-title" itemprop="name headline">defer执行顺序</h1>
+          <h1 class="post-title" itemprop="name headline">Go语言的协程调度原理和GMP设计</h1>
         
 
         <div class="post-meta">
@@ -328,7 +331,7 @@
               
                 <span class="post-meta-item-text">发表于</span>
               
-              <time title="创建于" itemprop="dateCreated datePublished" datetime="2021-12-18T11:11:51+08:00">
+              <time title="创建于" itemprop="dateCreated datePublished" datetime="2021-12-18T11:16:58+08:00">
                 2021-12-18
               </time>
             
@@ -369,8 +372,8 @@
                 <span class="post-meta-item-icon">
                   <i class="fa fa-comment-o"></i>
                 </span>
-                <a href="/2021/12/18/defer执行顺序/#comments" itemprop="discussionUrl">
-                  <span class="post-comments-count valine-comment-count" data-xid="/2021/12/18/defer执行顺序/" itemprop="commentCount"></span>
+                <a href="/2021/12/18/Go语言GMP模型/#comments" itemprop="discussionUrl">
+                  <span class="post-comments-count valine-comment-count" data-xid="/2021/12/18/Go语言GMP模型/" itemprop="commentCount"></span>
                 </a>
               </span>
             
@@ -398,28 +401,89 @@
       
 
       
-        <p><strong>知识点1：defer的执行顺序</strong></p>
-<p>多个defer出现的时候，它是一个“栈”的关系，也就是先进后出。一个函数中，写在前面的defer会比写在后面的defer调用的晚。</p>
-<p><strong>知识点2：defer和return的执行顺序</strong></p>
-<p>return之后的语句先执行，defer后的语句后执行</p>
-<p><strong>知识点3：函数的返回值初始化</strong></p>
-<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line">package main</span><br><span class="line"></span><br><span class="line">import &quot;fmt&quot;</span><br><span class="line"></span><br><span class="line">func DeferFunc1(i int) (t int) &#123;</span><br><span class="line"></span><br><span class="line">    fmt.Println(&quot;t = &quot;, t)</span><br><span class="line"></span><br><span class="line">    return 2</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func main() &#123;</span><br><span class="line">    DeferFunc11(10)</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">结果</span><br><span class="line">t =  0</span><br></pre></td></tr></table></figure>
-<p>只要声明函数的返回值变量名称，就会在函数初始化时候为之赋值为0，而且在函数体作用域可见。</p>
-<p><strong>知识点4：有名函数返回值遇见defer情况</strong></p>
-<p>先return，再defer，所以在执行完return之后，还要再执行defer里的语句，依然可以修改本应该返回的结果。</p>
-<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line">package main</span><br><span class="line"></span><br><span class="line">import &quot;fmt&quot;</span><br><span class="line"></span><br><span class="line">func returnButDefer() (t int) &#123;  //t初始化0， 并且作用域为该函数全域</span><br><span class="line"></span><br><span class="line">    defer func() &#123;</span><br><span class="line">        t = t * 10</span><br><span class="line">    &#125;()</span><br><span class="line"></span><br><span class="line">    return 1</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func main() &#123;</span><br><span class="line">    fmt.Println(returnButDefer())</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">$ go run test.go</span><br><span class="line">10</span><br></pre></td></tr></table></figure>
-<p><strong>知识点5：defer遇见panic</strong></p>
-<p>到panic时，遍历本协程的defer链表，并执行defer。在执行defer过程中:遇到recover则停止panic，返回recover处继续往下执行。如果没有遇到recover，遍历完本协程的defer链表后，向stderr抛出panic信息。</p>
-<p><img src="/images/golang/base/114-defer.jpeg" alt="avatar"></p>
-<p><strong>知识点6: defer中包含panic</strong></p>
-<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line">package main</span><br><span class="line"></span><br><span class="line">import (</span><br><span class="line">    &quot;fmt&quot;</span><br><span class="line">)</span><br><span class="line"></span><br><span class="line">func main()  &#123;</span><br><span class="line"></span><br><span class="line">    defer func() &#123;</span><br><span class="line">       if err := recover(); err != nil&#123;</span><br><span class="line">           fmt.Println(err)</span><br><span class="line">       &#125;else &#123;</span><br><span class="line">           fmt.Println(&quot;fatal&quot;)</span><br><span class="line">       &#125;</span><br><span class="line">    &#125;()</span><br><span class="line"></span><br><span class="line">    defer func() &#123;</span><br><span class="line">        panic(&quot;defer panic&quot;)</span><br><span class="line">    &#125;()</span><br><span class="line"></span><br><span class="line">    panic(&quot;panic&quot;)</span><br><span class="line">&#125;</span><br><span class="line">结果</span><br><span class="line"></span><br><span class="line">defer panic</span><br></pre></td></tr></table></figure>
-<p><strong>知识点7：defer下的函数参数包含子函数</strong></p>
-<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line">package main</span><br><span class="line"></span><br><span class="line">import &quot;fmt&quot;</span><br><span class="line"></span><br><span class="line">func function(index int, value int) int &#123;</span><br><span class="line"></span><br><span class="line">    fmt.Println(index)</span><br><span class="line"></span><br><span class="line">    return index</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func main() &#123;</span><br><span class="line">    defer function(1, function(3, 0))</span><br><span class="line">    defer function(2, function(4, 0))</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p> 这里，有4个函数，他们的index序号分别为1，2，3，4。</p>
-<p>那么这4个函数的先后执行顺序是什么呢？这里面有两个defer， 所以defer一共会压栈两次，先进栈1，后进栈2。 那么在压栈function1的时候，需要连同函数地址、函数形参一同进栈，那么为了得到function1的第二个参数的结果，所以就需要先执行function3将第二个参数算出，那么function3就被第一个执行。同理压栈function2，就需要执行function4算出function2第二个参数的值。然后函数结束，先出栈fuction2、再出栈function1.</p>
-<p> 所以顺序如下：</p>
-<p>defer压栈function1，压栈函数地址、形参1、形参2(调用function3) –&gt; 打印3<br>defer压栈function2，压栈函数地址、形参1、形参2(调用function4) –&gt; 打印4<br>defer出栈function2, 调用function2 –&gt; 打印2<br>defer出栈function1, 调用function1–&gt; 打印1<br>3<br>4<br>2<br>1</p>
-<p><a href="https://www.topgoer.cn/docs/golangxiuyang/golangxiuyang-1cmee0q64ij5p" target="_blank" rel="noopener">参考链接</a></p>
+        <h2 id="单线程时代"><a href="#单线程时代" class="headerlink" title="单线程时代"></a>单线程时代</h2><p>单进程时代不需要调度器，一切串行（存在阻塞问题）</p>
+<h2 id="多进程、线程时代"><a href="#多进程、线程时代" class="headerlink" title="多进程、线程时代"></a>多进程、线程时代</h2><p>多进程时代、线程时代有了调度器（解决了阻塞，进程拥有太多的资源，进程的创建、切换、销毁，都会占用很长的时间，CPU虽然利用起来了，但如果进程过多，CPU有很大的一部分都被用来进行进程调度了。）   设计线程、解决锁、竞争冲突  —–》CPU的利用率低，需要提高CPU的利用率</p>
+<p>多进程、多线程已经提高了系统的并发能力，但是在当今互联网高并发场景下，为每个任务都创建一个线程是不现实的，因为会消耗大量的内存(进程虚拟内存会占用4GB[32位操作系统], 而线程也要大约4MB)。</p>
+<ul>
+<li>大量的进程/线程出现了新的问题</li>
+<li>高内存占用</li>
+<li>调度的高消耗CPU</li>
+</ul>
+<h3 id="协程来提高CPU利用率"><a href="#协程来提高CPU利用率" class="headerlink" title="协程来提高CPU利用率"></a>协程来提高CPU利用率</h3><p>为了解决高内存占用、调度的高消耗CPU的问题，发现一个线程分为“内核态“线程和”用户态“线程。内核线程依然叫“线程(thread)”，用户线程叫“协程(co-routine)”.CPU只可见内核态的线程。<br>既然一个协程(co-routine)可以绑定一个线程(thread)，那么能不能多个协程(co-routine)绑定一个或者多个线程(thread)上呢。答案是可以的。于是协程和线程间的映射关系为N:1。</p>
+<p>N:1的关系有的优缺点：<br>    优点就是协程在用户态线程即完成切换，不会陷入到内核态，这种切换非常的轻量快速。但也有很大的缺点，1个进程的所有协程都绑定在1个线程上：<br>        某个程序用不了硬件的多核加速能力<br>        一旦某协程阻塞，造成线程阻塞，本进程的其他协程都无法执行了，根本就没有并发的能力了。<br>1：1的关系优缺点：<br>    优点：1个协程绑定1个线程，这种最容易实现。协程的调度都由CPU完成了，不存在N:1缺点：协程的创建、删除和切换的代价都由CPU完成，有点略显昂贵了。</p>
+<p>M:N的关系优缺点：<br>    M个协程绑定1个线程，是N:1和1:1类型的结合，克服了以上2种模型的缺点，但实现起来最为复杂。<br>     协程跟线程是有区别的，线程由CPU调度是抢占式的，协程由用户态调度是协作式的，一个协程让出CPU后，才执行下一个协程。</p>
+<h2 id="Go语言的协程goroutine"><a href="#Go语言的协程goroutine" class="headerlink" title="Go语言的协程goroutine"></a>Go语言的协程goroutine</h2><p>Go为了提供更容易使用的并发方法，使用了goroutine和channel。goroutine来自协程的概念，让一组可复用的函数运行在一组线程之上，即使有协程阻塞，该线程的其他协程也可以被runtime调度，转移到其他可运行的线程上。最关键的是，程序员看不到这些底层的细节，这就降低了编程的难度，提供了更容易的并发。<br>Go中，协程被称为goroutine，它非常轻量，一个goroutine只占几KB，并且这几KB就足够goroutine运行完，这就能在有限的内存空间内支持大量goroutine，支持了更多的并发。虽然一个goroutine的栈只占几KB，但实际是可伸缩的，如果需要更多内容，runtime会自动为goroutine分配。<br>Goroutine特点：</p>
+<ul>
+<li>占用内存更小（几kb）</li>
+<li>调度更灵活(runtime调度)</li>
+</ul>
+<h2 id="被废弃的goroutine调度器"><a href="#被废弃的goroutine调度器" class="headerlink" title="被废弃的goroutine调度器"></a>被废弃的goroutine调度器</h2><p>Go目前使用的调度器是2012年重新设计的，因为之前的调度器性能存在问题，所以使用4年就被废弃了，那么我们先来分析一下被废弃的调度器是如何运作的？</p>
+<p>M想要执行、放回G都必须访问全局G队列，并且M有多个，即多线程访问同一资源需要加锁进行保证互斥/同步，所以全局G队列是有互斥锁进行保护的。<br><img src="/images/golang/goroutine/14-old.png" alt="avatar"><br>老调度器有几个缺点：</p>
+<ul>
+<li>创建、销毁、调度G都需要每个M获取锁，这就形成了激烈的锁竞争。</li>
+<li>M转移G会造成延迟和额外的系统负载。比如当G中包含创建新协程的时候，M创建了G’，为了继续执行G，需要把G’交给M’执行，也造成了很差的局部性，因为G’和G是相关的，最好放在M上执行，而不是其他M’。</li>
+<li>系统调用(CPU在M之间的切换)导致频繁的线程阻塞和取消阻塞操作增加了系统开销。</li>
+</ul>
+<h2 id="Goroutine调度器的GMP模型的设计思想"><a href="#Goroutine调度器的GMP模型的设计思想" class="headerlink" title="Goroutine调度器的GMP模型的设计思想"></a>Goroutine调度器的GMP模型的设计思想</h2><h3 id="1-GMP-模型"><a href="#1-GMP-模型" class="headerlink" title="(1) GMP 模型"></a>(1) GMP 模型</h3><ul>
+<li>G-&gt;Goroutine</li>
+<li>M-&gt;Thread线程</li>
+<li>P-&gt;Processor</li>
+</ul>
+<p>线程是运行goroutine的实体，调度器的功能是把可运行的goroutine分配到工作线程上。<br><img src="/images/golang/goroutine/16-gmp.jpg" alt="avatar"></p>
+<ul>
+<li>全局队列（Global Queue）：存放等待运行的G。</li>
+<li>P的本地队列：同全局队列类似，存放的也是等待运行的G，存的数量有限，不超过256个。新建G’时，G’优先加入到P的本地队列，如果队列满了，则会把本地队列中一半的G移动到全局队列。</li>
+<li>P列表：所有的P都在程序启动时创建，并保存在数组中，最多有GOMAXPROCS(可配置)个。</li>
+<li>M：线程想运行任务就得获取P，从P的本地队列获取G，P队列为空时，M也会尝试从全局队列拿一批G放到P的本地队列，或从其他P的本地队列偷一半放到自己P的本地队列。M运行G，G执行之后，M会从P获取下一个G，不断重复下去。</li>
+</ul>
+<p>Goroutine调度器和OS调度器是通过M结合起来的，每个M都代表了1个内核线程，OS调度器负责把内核线程分配到CPU的核上执行。</p>
+<p><strong>有关P和M的个数问题</strong></p>
+<p>1、P的数量：</p>
+<p>由启动时环境变量$GOMAXPROCS或者是由runtime的方法GOMAXPROCS()决定。这意味着在程序执行的任意时刻都只有$GOMAXPROCS个goroutine在同时运行。</p>
+<p>2、M的数量:</p>
+<p>go语言本身的限制：go程序启动时，会设置M的最大数量，默认10000.但是内核很难支持这么多的线程数，所以这个限制可以忽略。<br>runtime/debug中的SetMaxThreads函数，设置M的最大数量<br>一个M阻塞了，会创建新的M。<br>M与P的数量没有绝对关系，一个M阻塞，P就会去创建或者切换另一个M，所以，即使P的默认数量是1，也有可能会创建很多个M出来。</p>
+<p><strong>P和M何时会被创建</strong></p>
+<p>1、P何时创建：在确定了P的最大数量n后，运行时系统会根据这个数量创建n个P。</p>
+<p>2、M何时创建：没有足够的M来关联P并运行其中的可运行的G。比如所有的M此时都阻塞住了，而P中还有很多就绪任务，就会去寻找空闲的M，而没有空闲的，就会去创建新的M。</p>
+<h2 id="2-调度器的设计策略"><a href="#2-调度器的设计策略" class="headerlink" title="(2)调度器的设计策略"></a>(2)调度器的设计策略</h2><h3 id="复用线程：避免频繁的创建、销毁线程，而是对线程的复用。"><a href="#复用线程：避免频繁的创建、销毁线程，而是对线程的复用。" class="headerlink" title="复用线程：避免频繁的创建、销毁线程，而是对线程的复用。"></a>复用线程：避免频繁的创建、销毁线程，而是对线程的复用。</h3><ul>
+<li><p>1）work stealing机制</p>
+<pre><code>当本线程无可运行的G时，尝试从其他线程绑定的P偷取G，而不是销毁线程。
+</code></pre></li>
+<li><p>2）hand off机制</p>
+<pre><code>当本线程因为G进行系统调用阻塞时，线程释放绑定的P，把P转移给其他空闲的线程执行。
+</code></pre></li>
+</ul>
+<h3 id="利用并行："><a href="#利用并行：" class="headerlink" title="利用并行："></a>利用并行：</h3><pre><code>GOMAXPROCS设置P的数量，最多有GOMAXPROCS个线程分布在多个CPU上同时运行。GOMAXPROCS也限制了并发的程度，比如GOMAXPROCS = 核数/2，则最多利用了一半的CPU核进行并行。
+</code></pre><h3 id="抢占："><a href="#抢占：" class="headerlink" title="抢占："></a>抢占：</h3><pre><code>在coroutine中要等待一个协程主动让出CPU才执行下一个协程，在Go中，一个goroutine最多占用CPU 10ms，防止其他goroutine被饿死，这就是goroutine不同于coroutine的一个地方。
+</code></pre><h3 id="全局G队列："><a href="#全局G队列：" class="headerlink" title="全局G队列："></a>全局G队列：</h3><pre><code>在新的调度器中依然有全局G队列，但功能已经被弱化了，当M执行work stealing从其他P偷不到G时，它可以从全局G队列获取G。
+</code></pre><h2 id="3-go-func-调度流程"><a href="#3-go-func-调度流程" class="headerlink" title="(3) go func() 调度流程"></a>(3) go func() 调度流程</h2><p><img src="/images/golang/goroutine/18-go-func.jpeg" alt="avatar"></p>
+<p>从上图我们可以分析出几个结论：</p>
+<p>​  *  1、我们通过 go func()来创建一个goroutine；</p>
+<ul>
+<li>​ 2、有两个存储G的队列，一个是局部调度器P的本地队列、一个是全局G队列。新创建的G会先保存在P的本地队列中，如果P的本地队列已经满了就会保存在全局的队列中；</li>
+<li>​ 3、G只能运行在M中，一个M必须持有一个P，M与P是1：1的关系。M会从P的本地队列弹出一个可执行状态的G来执行，如果P的本地队列为空，就会想其他的MP组合偷取一个可执行的G来执行；</li>
+<li>​ 4、一个M调度G执行的过程是一个循环机制；</li>
+<li>​ 5、当M执行某一个G时候如果发生了syscall或则其余阻塞操作，M会阻塞，如果当前有一些G在执行，runtime会把这个线程M从P中摘除(detach)，然后再创建一个新的操作系统的线程(如果有空闲的线程可用就复用空闲线程)来服务于这个P；</li>
+<li>​ 6、当M系统调用结束时候，这个G会尝试获取一个空闲的P执行，并放入到这个P的本地队列。如果获取不到P，那么这个线程M变成休眠状态， 加入到空闲线程中，然后这个G会被放入全局队列中。</li>
+</ul>
+<h2 id="4-调度器的生命周期"><a href="#4-调度器的生命周期" class="headerlink" title="(4)调度器的生命周期"></a>(4)调度器的生命周期</h2><p><img src="/images/golang/goroutine/17-pic-go.png" alt="avatar"></p>
+<h3 id="M0"><a href="#M0" class="headerlink" title="M0"></a>M0</h3><p>M0是启动程序后的编号为0的主线程，这个M对应的实例会在全局变量runtime.m0中，不需要在heap上分配，M0负责执行初始化操作和启动第一个G， 在之后M0就和其他的M一样了。</p>
+<h3 id="G0"><a href="#G0" class="headerlink" title="G0"></a>G0</h3><p>G0是每次启动一个M都会第一个创建的gourtine，G0仅用于负责调度的G，G0不指向任何可执行的函数, 每个M都会有一个自己的G0。在调度或系统调用时会使用G0的栈空间, 全局变量的G0是M0的G0。</p>
+<p>我们来跟踪一段代码</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">package main</span><br><span class="line">import &quot;fmt&quot;</span><br><span class="line">func main() &#123;</span><br><span class="line">    fmt.Println(&quot;Hello world&quot;)</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<p>经历如上图所示的过程：</p>
+<ul>
+<li>runtime创建最初的线程m0和goroutine g0，并把2者关联。</li>
+<li>调度器初始化：初始化m0、栈、垃圾回收，以及创建和初始化由GOMAXPROCS个P构成的P列表。</li>
+<li>示例代码中的main函数是main.main，runtime中也有1个main函数——runtime.main，代码经过编译后，runtime.main会调用main.main，程序启动时会为runtime.main创建goroutine，称它为main goroutine吧，然后把main goroutine加入到P的本地队列。</li>
+<li>启动m0，m0已经绑定了P，会从P的本地队列获取G，获取到main goroutine。</li>
+<li>G拥有栈，M根据G中的栈信息和调度信息设置运行环境</li>
+<li>M运行G</li>
+<li>G退出，再次回到M获取可运行的G，这样重复下去，直到main.main退出，runtime.main执行Defer和Panic处理，或调用runtime.exit退出程序。</li>
+</ul>
+<p>调度器的生命周期几乎占满了一个Go程序的一生，runtime.main的goroutine执行之前都是为调度器做准备工作，runtime.main的goroutine运行，才是调度器的真正开始，直到runtime.main结束而结束。</p>
+<h2 id="5-可视化GMP编程"><a href="#5-可视化GMP编程" class="headerlink" title="(5)可视化GMP编程"></a>(5)可视化GMP编程</h2><h3 id="方式1：go-tool-trace"><a href="#方式1：go-tool-trace" class="headerlink" title="方式1：go tool trace"></a>方式1：go tool trace</h3><p>trace记录了运行时的信息，能提供可视化的Web页面。</p>
+<h3 id="方式2：Debug-trace"><a href="#方式2：Debug-trace" class="headerlink" title="方式2：Debug trace"></a>方式2：Debug trace</h3><p><a href="https://www.topgoer.cn/docs/golangxiuyang/golangxiuyang-1cmeduvk27bo0" target="_blank" rel="noopener">Go的协程调度原理和GMP设计？</a></p>
 
       
     </div>
@@ -479,8 +543,8 @@
         <div class="post-nav">
           <div class="post-nav-next post-nav-item">
             
-              <a href="/1994/01/17/introduce/" rel="next" title="工作简历">
-                <i class="fa fa-chevron-left"></i> 工作简历
+              <a href="/2021/12/18/Go中逃逸分析/" rel="next" title="Go中逃逸分析">
+                <i class="fa fa-chevron-left"></i> Go中逃逸分析
               </a>
             
           </div>
@@ -489,8 +553,8 @@
 
           <div class="post-nav-prev post-nav-item">
             
-              <a href="/2021/12/18/make与new的区别/" rel="prev" title="make和new的区别">
-                make和new的区别 <i class="fa fa-chevron-right"></i>
+              <a href="/2021/12/18/debug及性能问题实践/" rel="prev" title="debug以及性能实践">
+                debug以及性能实践 <i class="fa fa-chevron-right"></i>
               </a>
             
           </div>
@@ -546,8 +610,17 @@
       
 
       
+        <ul class="sidebar-nav motion-element">
+          <li class="sidebar-nav-toc sidebar-nav-active" data-target="post-toc-wrap">
+            文章目录
+          </li>
+          <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+            站点概览
+          </li>
+        </ul>
+      
 
-      <section class="site-overview-wrap sidebar-panel sidebar-panel-active">
+      <section class="site-overview-wrap sidebar-panel">
         <div class="site-overview">
           <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
             
@@ -607,6 +680,22 @@
         </div>
       </section>
 
+      
+      <!--noindex-->
+        <section class="post-toc-wrap motion-element sidebar-panel sidebar-panel-active">
+          <div class="post-toc">
+
+            
+              
+            
+
+            
+              <div class="post-toc-content"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#单线程时代"><span class="nav-number">1.</span> <span class="nav-text">单线程时代</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#多进程、线程时代"><span class="nav-number">2.</span> <span class="nav-text">多进程、线程时代</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#协程来提高CPU利用率"><span class="nav-number">2.1.</span> <span class="nav-text">协程来提高CPU利用率</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#Go语言的协程goroutine"><span class="nav-number">3.</span> <span class="nav-text">Go语言的协程goroutine</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#被废弃的goroutine调度器"><span class="nav-number">4.</span> <span class="nav-text">被废弃的goroutine调度器</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#Goroutine调度器的GMP模型的设计思想"><span class="nav-number">5.</span> <span class="nav-text">Goroutine调度器的GMP模型的设计思想</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#1-GMP-模型"><span class="nav-number">5.1.</span> <span class="nav-text">(1) GMP 模型</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#2-调度器的设计策略"><span class="nav-number">6.</span> <span class="nav-text">(2)调度器的设计策略</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#复用线程：避免频繁的创建、销毁线程，而是对线程的复用。"><span class="nav-number">6.1.</span> <span class="nav-text">复用线程：避免频繁的创建、销毁线程，而是对线程的复用。</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#利用并行："><span class="nav-number">6.2.</span> <span class="nav-text">利用并行：</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#抢占："><span class="nav-number">6.3.</span> <span class="nav-text">抢占：</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#全局G队列："><span class="nav-number">6.4.</span> <span class="nav-text">全局G队列：</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#3-go-func-调度流程"><span class="nav-number">7.</span> <span class="nav-text">(3) go func() 调度流程</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#4-调度器的生命周期"><span class="nav-number">8.</span> <span class="nav-text">(4)调度器的生命周期</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#M0"><span class="nav-number">8.1.</span> <span class="nav-text">M0</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#G0"><span class="nav-number">8.2.</span> <span class="nav-text">G0</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#5-可视化GMP编程"><span class="nav-number">9.</span> <span class="nav-text">(5)可视化GMP编程</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#方式1：go-tool-trace"><span class="nav-number">9.1.</span> <span class="nav-text">方式1：go tool trace</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#方式2：Debug-trace"><span class="nav-number">9.2.</span> <span class="nav-text">方式2：Debug trace</span></a></li></ol></li></ol></div>
+            
+
+          </div>
+        </section>
+      <!--/noindex-->
       
 
       

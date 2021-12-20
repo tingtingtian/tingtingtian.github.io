@@ -68,7 +68,7 @@
 
 
 
-  <meta name="keywords" content="Hexo, NexT">
+  <meta name="keywords" content="golang,">
 
 
 
@@ -79,17 +79,18 @@
 
 
 
-<meta name="description" content="联系方式2565086122@qq.com  工作简历">
-<meta property="og:type" content="website">
-<meta property="og:title" content="about">
-<meta property="og:url" content="http://yoursite.com/about/index.html">
+<meta name="description" content="相同   堆空间分配 不同make: 只用于slice、map以及channel的初始化， 无可替代new: 用于类型内存分配(初始化值为0)， 不常用 new不常用  所以有new这个内置函数，可以给我们分配一块内存让我们使用，但是现实的编码中，它是不常用的。我们通常都是采用短语句声明以及结构体的字面量达到我们的目的，比如：   12i : =0u := user&amp;#123;&amp;#125; mak">
+<meta name="keywords" content="golang">
+<meta property="og:type" content="article">
+<meta property="og:title" content="make和new的区别">
+<meta property="og:url" content="http://yoursite.com/2021/12/18/make与new的区别/index.html">
 <meta property="og:site_name" content="Tlog">
-<meta property="og:description" content="联系方式2565086122@qq.com  工作简历">
+<meta property="og:description" content="相同   堆空间分配 不同make: 只用于slice、map以及channel的初始化， 无可替代new: 用于类型内存分配(初始化值为0)， 不常用 new不常用  所以有new这个内置函数，可以给我们分配一块内存让我们使用，但是现实的编码中，它是不常用的。我们通常都是采用短语句声明以及结构体的字面量达到我们的目的，比如：   12i : =0u := user&amp;#123;&amp;#125; mak">
 <meta property="og:locale" content="zh-Hans">
-<meta property="og:updated_time" content="2021-12-18T08:46:54.484Z">
+<meta property="og:updated_time" content="2021-12-20T02:58:31.931Z">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="about">
-<meta name="twitter:description" content="联系方式2565086122@qq.com  工作简历">
+<meta name="twitter:title" content="make和new的区别">
+<meta name="twitter:description" content="相同   堆空间分配 不同make: 只用于slice、map以及channel的初始化， 无可替代new: 用于类型内存分配(初始化值为0)， 不常用 new不常用  所以有new这个内置函数，可以给我们分配一块内存让我们使用，但是现实的编码中，它是不常用的。我们通常都是采用短语句声明以及结构体的字面量达到我们的目的，比如：   12i : =0u := user&amp;#123;&amp;#125; mak">
 
 
 
@@ -119,7 +120,7 @@
 
 
 
-  <link rel="canonical" href="http://yoursite.com/about/">
+  <link rel="canonical" href="http://yoursite.com/2021/12/18/make与new的区别/">
 
 
 
@@ -127,7 +128,7 @@
 
 <script data-ad-client="ca-pub-7938886583915179" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
 
-  <title>about | Tlog</title>
+  <title>make和new的区别 | Tlog</title>
   
 
 
@@ -284,36 +285,213 @@
 
   <div id="posts" class="posts-expand">
     
+
+  
+
+  
+  
+  
+
+  <article class="post post-type-normal" itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block">
+    <link itemprop="mainEntityOfPage" href="http://yoursite.com/2021/12/18/make与new的区别/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="婷">
+      <meta itemprop="description" content>
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="Tlog">
+    </span>
+
     
-    
-    <div class="post-block page">
       <header class="post-header">
 
-	<h1 class="post-title" itemprop="name headline">about</h1>
-
-
-
-</header>
-
-      
-      
-      
-      <div class="post-body">
         
         
-          <h2 id="联系方式"><a href="#联系方式" class="headerlink" title="联系方式"></a>联系方式</h2><p><a href="mailto:2565086122@qq.com" target="_blank" rel="noopener">2565086122@qq.com</a></p>
-<hr>
-<p><a href="https://tingtingtian.github.io/1994/01/17/introduce/" target="_blank" rel="noopener">工作简历</a></p>
-
+          <h1 class="post-title" itemprop="name headline">make和new的区别</h1>
         
-      </div>
+
+        <div class="post-meta">
+          <span class="post-time">
+            
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              
+                <span class="post-meta-item-text">发表于</span>
+              
+              <time title="创建于" itemprop="dateCreated datePublished" datetime="2021-12-18T11:12:51+08:00">
+                2021-12-18
+              </time>
+            
+
+            
+
+            
+          </span>
+
+          
+            <span class="post-category">
+            
+              <span class="post-meta-divider">|</span>
+            
+              <span class="post-meta-item-icon">
+                <i class="fa fa-folder-o"></i>
+              </span>
+              
+                <span class="post-meta-item-text">分类于</span>
+              
+              
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/languages/" itemprop="url" rel="index">
+                    <span itemprop="name">languages</span>
+                  </a>
+                </span>
+
+                
+                
+              
+            </span>
+          
+
+          
+            
+              <span class="post-comments-count">
+                <span class="post-meta-divider">|</span>
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-comment-o"></i>
+                </span>
+                <a href="/2021/12/18/make与new的区别/#comments" itemprop="discussionUrl">
+                  <span class="post-comments-count valine-comment-count" data-xid="/2021/12/18/make与new的区别/" itemprop="commentCount"></span>
+                </a>
+              </span>
+            
+          
+
+          
+          
+
+          
+
+          
+
+          
+
+        </div>
+      </header>
+    
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
       
       
+
+      
+        <h2 id="相同"><a href="#相同" class="headerlink" title="相同"></a>相同</h2><p>   堆空间分配</p>
+<h2 id="不同"><a href="#不同" class="headerlink" title="不同"></a>不同</h2><p>make: 只用于slice、map以及channel的初始化， 无可替代<br>new: 用于类型内存分配(初始化值为0)， 不常用</p>
+<p>new不常用<br>  所以有new这个内置函数，可以给我们分配一块内存让我们使用，但是现实的编码中，它是不常用的。我们通常都是采用短语句声明以及结构体的字面量达到我们的目的，比如：</p>
+  <figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">i : =0</span><br><span class="line">u := user&#123;&#125;</span><br></pre></td></tr></table></figure>
+<p>make 无可替代<br>我们在使用slice、map以及channel的时候，还是要使用make进行初始化，然后才才可以对他们进行操作。</p>
+
       
     </div>
     
     
     
+
+    
+
+    
+      <div>
+        <div style="padding: 10px 0; margin: 20px auto; width: 90%; text-align: center;">
+  <div></div>
+  <button id="rewardButton" disable="enable" onclick="var qr = document.getElementById('QR'); if (qr.style.display === 'none') {qr.style.display='block';} else {qr.style.display='none'}">
+    <span>打赏</span>
+  </button>
+  <div id="QR" style="display: none;">
+
+    
+      <div id="wechat" style="display: inline-block">
+        <img id="wechat_qr" src="/images/wechatpay.png" alt="婷 微信支付">
+        <p>微信支付</p>
+      </div>
+    
+
+    
+      <div id="alipay" style="display: inline-block">
+        <img id="alipay_qr" src="/images/alipay.jpeg" alt="婷 支付宝">
+        <p>支付宝</p>
+      </div>
+    
+
+    
+
+  </div>
+</div>
+
+      </div>
+    
+
+    
+
+    <footer class="post-footer">
+      
+        <div class="post-tags">
+          
+            <a href="/tags/golang/" rel="tag"># golang</a>
+          
+        </div>
+      
+
+      
+      
+      
+
+      
+        <div class="post-nav">
+          <div class="post-nav-next post-nav-item">
+            
+              <a href="/2021/12/18/defer执行顺序/" rel="next" title="defer执行顺序">
+                <i class="fa fa-chevron-left"></i> defer执行顺序
+              </a>
+            
+          </div>
+
+          <span class="post-nav-divider"></span>
+
+          <div class="post-nav-prev post-nav-item">
+            
+              <a href="/2021/12/18/Go中逃逸分析/" rel="prev" title="Go中逃逸分析">
+                Go中逃逸分析 <i class="fa fa-chevron-right"></i>
+              </a>
+            
+          </div>
+        </div>
+      
+
+      
+      
+    </footer>
+  </div>
+  
+  
+  
+  </article>
+
+
+
+    <div class="post-spread">
+      
+    </div>
   </div>
 
 
@@ -429,7 +607,7 @@
             
 
             
-              <div class="post-toc-content"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#联系方式"><span class="nav-number">1.</span> <span class="nav-text">联系方式</span></a></li></ol></div>
+              <div class="post-toc-content"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#相同"><span class="nav-number">1.</span> <span class="nav-text">相同</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#不同"><span class="nav-number">2.</span> <span class="nav-text">不同</span></a></li></ol></div>
             
 
           </div>

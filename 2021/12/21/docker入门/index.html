@@ -68,7 +68,7 @@
 
 
 
-  <meta name="keywords" content="Hexo, NexT">
+  <meta name="keywords" content="docker,">
 
 
 
@@ -79,17 +79,18 @@
 
 
 
-<meta name="description" content="联系方式2565086122@qq.com  工作简历">
-<meta property="og:type" content="website">
-<meta property="og:title" content="about">
-<meta property="og:url" content="http://yoursite.com/about/index.html">
+<meta name="description" content="1、docker版本变化2、docker的镜像 镜像的拉取  docker pull 镜像的推送  docker push 镜像的保存  docker save 镜像的加载  docker load 镜像的导入  docker import 镜像的删除  docker image rm 镜像的提交  docker commit 镜像的构建  docker build -t 镜像名 .(这里是上下文">
+<meta name="keywords" content="docker">
+<meta property="og:type" content="article">
+<meta property="og:title" content="docker 入门">
+<meta property="og:url" content="http://yoursite.com/2021/12/21/docker入门/index.html">
 <meta property="og:site_name" content="Tlog">
-<meta property="og:description" content="联系方式2565086122@qq.com  工作简历">
+<meta property="og:description" content="1、docker版本变化2、docker的镜像 镜像的拉取  docker pull 镜像的推送  docker push 镜像的保存  docker save 镜像的加载  docker load 镜像的导入  docker import 镜像的删除  docker image rm 镜像的提交  docker commit 镜像的构建  docker build -t 镜像名 .(这里是上下文">
 <meta property="og:locale" content="zh-Hans">
-<meta property="og:updated_time" content="2021-12-18T08:46:54.484Z">
+<meta property="og:updated_time" content="2021-12-20T06:09:16.060Z">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="about">
-<meta name="twitter:description" content="联系方式2565086122@qq.com  工作简历">
+<meta name="twitter:title" content="docker 入门">
+<meta name="twitter:description" content="1、docker版本变化2、docker的镜像 镜像的拉取  docker pull 镜像的推送  docker push 镜像的保存  docker save 镜像的加载  docker load 镜像的导入  docker import 镜像的删除  docker image rm 镜像的提交  docker commit 镜像的构建  docker build -t 镜像名 .(这里是上下文">
 
 
 
@@ -119,7 +120,7 @@
 
 
 
-  <link rel="canonical" href="http://yoursite.com/about/">
+  <link rel="canonical" href="http://yoursite.com/2021/12/21/docker入门/">
 
 
 
@@ -127,7 +128,7 @@
 
 <script data-ad-client="ca-pub-7938886583915179" async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
 
-  <title>about | Tlog</title>
+  <title>docker 入门 | Tlog</title>
   
 
 
@@ -284,36 +285,300 @@
 
   <div id="posts" class="posts-expand">
     
+
+  
+
+  
+  
+  
+
+  <article class="post post-type-normal" itemscope itemtype="http://schema.org/Article">
+  
+  
+  
+  <div class="post-block">
+    <link itemprop="mainEntityOfPage" href="http://yoursite.com/2021/12/21/docker入门/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="name" content="婷">
+      <meta itemprop="description" content>
+      <meta itemprop="image" content="/images/avatar.gif">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="Tlog">
+    </span>
+
     
-    
-    <div class="post-block page">
       <header class="post-header">
 
-	<h1 class="post-title" itemprop="name headline">about</h1>
-
-
-
-</header>
-
-      
-      
-      
-      <div class="post-body">
         
         
-          <h2 id="联系方式"><a href="#联系方式" class="headerlink" title="联系方式"></a>联系方式</h2><p><a href="mailto:2565086122@qq.com" target="_blank" rel="noopener">2565086122@qq.com</a></p>
-<hr>
-<p><a href="https://tingtingtian.github.io/1994/01/17/introduce/" target="_blank" rel="noopener">工作简历</a></p>
-
+          <h1 class="post-title" itemprop="name headline">docker 入门</h1>
         
-      </div>
+
+        <div class="post-meta">
+          <span class="post-time">
+            
+              <span class="post-meta-item-icon">
+                <i class="fa fa-calendar-o"></i>
+              </span>
+              
+                <span class="post-meta-item-text">发表于</span>
+              
+              <time title="创建于" itemprop="dateCreated datePublished" datetime="2021-12-21T11:20:51+08:00">
+                2021-12-21
+              </time>
+            
+
+            
+
+            
+          </span>
+
+          
+            <span class="post-category">
+            
+              <span class="post-meta-divider">|</span>
+            
+              <span class="post-meta-item-icon">
+                <i class="fa fa-folder-o"></i>
+              </span>
+              
+                <span class="post-meta-item-text">分类于</span>
+              
+              
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/container/" itemprop="url" rel="index">
+                    <span itemprop="name">container</span>
+                  </a>
+                </span>
+
+                
+                
+              
+            </span>
+          
+
+          
+            
+              <span class="post-comments-count">
+                <span class="post-meta-divider">|</span>
+                <span class="post-meta-item-icon">
+                  <i class="fa fa-comment-o"></i>
+                </span>
+                <a href="/2021/12/21/docker入门/#comments" itemprop="discussionUrl">
+                  <span class="post-comments-count valine-comment-count" data-xid="/2021/12/21/docker入门/" itemprop="commentCount"></span>
+                </a>
+              </span>
+            
+          
+
+          
+          
+
+          
+
+          
+
+          
+
+        </div>
+      </header>
+    
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
       
       
+
+      
+        <h2 id="1、docker版本变化"><a href="#1、docker版本变化" class="headerlink" title="1、docker版本变化"></a>1、docker版本变化</h2><h2 id="2、docker的镜像"><a href="#2、docker的镜像" class="headerlink" title="2、docker的镜像"></a>2、docker的镜像</h2><ul>
+<li>镜像的拉取  docker pull</li>
+<li>镜像的推送  docker push</li>
+<li>镜像的保存  docker save</li>
+<li>镜像的加载  docker load</li>
+<li>镜像的导入  docker import</li>
+<li>镜像的删除  docker image rm</li>
+<li>镜像的提交  docker commit</li>
+<li>镜像的构建  docker build -t 镜像名 .(这里是上下文对象)</li>
+</ul>
+<h2 id="3、docker的container"><a href="#3、docker的container" class="headerlink" title="3、docker的container"></a>3、docker的container</h2><ul>
+<li>容器的运行   docker run  -it –name 镜像名称  -p  宿主机端口：容器内端口 (docker start 容器ID/名称)</li>
+<li>容器的进入   docker attach/exec  -it 容器ID/名称  /bin/bash</li>
+<li>容器的退出   exit（Ctrl+d）   （docker stop 容器ID/名称）</li>
+<li>容器的导出   docker export  容器ID/名称 &gt; 镜像名称.tar</li>
+<li>容器的删除   docker container rm 容器ID/名称</li>
+</ul>
+<h2 id="4、仓库"><a href="#4、仓库" class="headerlink" title="4、仓库"></a>4、仓库</h2><ul>
+<li>Docker Hub</li>
+<li>私有仓库</li>
+</ul>
+<h2 id="5、docker的卷"><a href="#5、docker的卷" class="headerlink" title="5、docker的卷"></a>5、docker的卷</h2><p>数据卷 是一个可供一个或多个容器使用的特殊目录，它绕过 UFS，可以提供很多有用的特性：</p>
+<ul>
+<li>数据卷 可以在容器之间共享和重用</li>
+<li>对 数据卷 的修改会立马生效</li>
+<li>对 数据卷 的更新，不会影响镜像</li>
+<li>数据卷 默认会一直存在，即使容器被删除<br>注意：数据卷 的使用，类似于 Linux 下对目录或文件进行 mount，镜像中的被指定为挂载点的目录中的文件会隐藏掉，能显示看到的是挂载的 数据卷。</li>
+</ul>
+<ul>
+<li>创建卷   docker volume create 卷的名称</li>
+<li>查看卷   docker volume ls</li>
+<li>删除卷   docker volumr rm</li>
+<li>查看卷的详情  docker volume inspect 卷的名称 </li>
+<li>卷的挂载  在用 docker run 命令的时候，使用 –mount 标记来将 数据卷 挂载到容器里。在一次 docker run 中可以挂载多个 数据卷。下面创建一个名为 web 的容器，并加载一个 数据卷<br>到容器的 /webapp 目录。<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">docker run -d -P \</span><br><span class="line">--name web \</span><br><span class="line"># -v my-vol:/wepapp \</span><br><span class="line">--mount source=my-vol,target=/webapp \</span><br><span class="line">training/webapp \</span><br><span class="line">python app.py</span><br></pre></td></tr></table></figure>
+</li>
+</ul>
+<h2 id="6、docker的网络"><a href="#6、docker的网络" class="headerlink" title="6、docker的网络"></a>6、docker的网络</h2><ul>
+<li>网络的创建  docker network create -d bridge 网络名称</li>
+<li>网络的删除  docker network rm 网络名称</li>
+<li>网络的应用  docker run -it –rm –name busybox1 –network 网络名称 容器名称 sh</li>
+</ul>
+<h2 id="7、docker-compose的使用"><a href="#7、docker-compose的使用" class="headerlink" title="7、docker-compose的使用"></a>7、docker-compose的使用</h2><p>服务 (service)：一个应用容器，实际上可以运行多个相同镜像的实例。<br>项目 (project)：由一组关联的应用容器组成的一个完整业务单元。<br>可见，一个项目可以由多个服务（容器）关联而成，Compose 面向项目进行管理。<br>docker中的DockerFile是一个镜像如何制作的过程，是一个横向的概念。docker中的docker-compose是定义一个项目，即一组应用的集合。是一个纵向的概念。</p>
+<p>docker-compose安装：curl -L <a href="https://get.daocloud.io/docker/compose/releases/download/1.25.0/docker-compose-`uname" target="_blank" rel="noopener">https://get.daocloud.io/docker/compose/releases/download/1.25.0/docker-compose-`uname</a> -s<code>-</code>uname -m` &gt; /usr/local/bin/docker-compose<br>      添加执行权限：chmod +x /usr/local/bin/docker-compose<br>  查看是否安装成功：docker-compose –version</p>
+<ul>
+<li><p>基础命令<br>docker-compose 命令 –help                  #获得一个命令的帮助<br>docker-compose version                     #查看docker-compose版本信息</p>
+</li>
+<li><p>构建、卸载<br>docker-compose up -d C                     #构建启动某个容器<br>docker-compose down                        #停止并删除所有容器、网络、镜像等</p>
+</li>
+<li><p>启动、停止、重启、删除容器<br>docker-compose stop C<br>docker-compose start C<br>docker-compose restart C<br>docker-compose rm C                        #删除容器（删除前必须关闭容器，执行stop）</p>
+</li>
+<li><p>列出所有容器<br>docker-compose ps</p>
+</li>
+<li>进入到容器中<br>docker-compose exec C /bin/bash            #登录到容器中</li>
+<li><p>查看容器的实时日志<br>docker-compose logs  -f  C                  #查看容器的实时日志<br>docker-compose logs –tail 10 -f C          #查看容器的实时日志(从最后10行开始)</p>
+</li>
+<li><p>列出所有镜像<br>docker-compse images</p>
+</li>
+<li><p>检查并查看配置信息<br>docker-compose config                       #配置错误时，会输出错误信息</p>
+</li>
+<li><p>查看各个容器内运行的进程<br>docker-compose top</p>
+</li>
+<li><p>其它<br>docker-compose build C                       #构建镜像<br>docker-compose build –no-cache C            #不带缓存的构建<br>docker-compose events –json C               #以json形式输出容器的日志<br>docker-compose pause C                       #暂停容器<br>docker-compose unpause C                     #恢复容器</p>
+</li>
+</ul>
+<h2 id="8、docker-mechine的使用"><a href="#8、docker-mechine的使用" class="headerlink" title="8、docker-mechine的使用"></a>8、docker-mechine的使用</h2><p>docker-mechine的安装：base=<a href="https://github.com/docker/machine/releases/download/v0.16.0" target="_blank" rel="noopener">https://github.com/docker/machine/releases/download/v0.16.0</a> &amp;&amp;<br>  curl -L $base/docker-machine-$(uname -s)-$(uname -m) &gt;/tmp/docker-machine &amp;&amp;<br>  mv /tmp/docker-machine /usr/local/bin/docker-machine &amp;&amp;<br>  chmod +x /usr/local/bin/docker-machine</p>
+<p>docker-mechine:创建docker版的虚拟机（创建一个虚拟的 Docker 主机）</p>
+<ul>
+<li>docker-machine config</li>
+<li>docker-machine env</li>
+<li>docker-machine inspect</li>
+<li>docker-machine ip        #这个命令也能让你知道你当前管理的主机IP</li>
+<li>docker-machine kill</li>
+<li>docker-machine provision</li>
+<li>docker-machine regenerate-certs</li>
+<li>docker-machine restart</li>
+<li>docker-machine ssh        #远程ssh连接到docker虚拟机上</li>
+<li>docker-machine start</li>
+<li>docker-machine status</li>
+<li>docker-machine stop        #暂停docker虚拟机</li>
+<li>docker-machine upgrade</li>
+<li>docker-machine url</li>
+</ul>
+<h2 id="9、docker容器实现安全的机制"><a href="#9、docker容器实现安全的机制" class="headerlink" title="9、docker容器实现安全的机制"></a>9、docker容器实现安全的机制</h2><ul>
+<li>独立的命名空间和控制组集合，命名空间提供了最基础也是最直接的隔离，在容器中运行的进程不会被运行在主机上的进程和其它容器发现和作用。</li>
+<li>服务端防护， Linux 命名空间机制可以实现使用非 root 用户来运行，确保可信用户才能访问共享文件夹；REST API更新；</li>
+<li>内核能力机制  Linux 内核一个强大的特性，可以提供细粒度的权限访问控制</li>
+<li>其它安全策略等等</li>
+</ul>
+<h2 id="10、底层实现"><a href="#10、底层实现" class="headerlink" title="10、底层实现"></a>10、底层实现</h2><ul>
+<li>基本架构</li>
+<li>命名空间</li>
+<li>控制组</li>
+<li>联合文件系统</li>
+<li>网络</li>
+<li>容器格式<br>最初，Docker 采用了 LXC 中的容器格式。从 0.7 版本以后开始去除 LXC，转而使用自行开发的 libcontainer，从 1.11 开始，则进一步演进为使用 runC 和 containerd。</li>
+</ul>
+
       
     </div>
     
     
     
+
+    
+
+    
+      <div>
+        <div style="padding: 10px 0; margin: 20px auto; width: 90%; text-align: center;">
+  <div></div>
+  <button id="rewardButton" disable="enable" onclick="var qr = document.getElementById('QR'); if (qr.style.display === 'none') {qr.style.display='block';} else {qr.style.display='none'}">
+    <span>打赏</span>
+  </button>
+  <div id="QR" style="display: none;">
+
+    
+      <div id="wechat" style="display: inline-block">
+        <img id="wechat_qr" src="/images/wechatpay.png" alt="婷 微信支付">
+        <p>微信支付</p>
+      </div>
+    
+
+    
+      <div id="alipay" style="display: inline-block">
+        <img id="alipay_qr" src="/images/alipay.jpeg" alt="婷 支付宝">
+        <p>支付宝</p>
+      </div>
+    
+
+    
+
+  </div>
+</div>
+
+      </div>
+    
+
+    
+
+    <footer class="post-footer">
+      
+        <div class="post-tags">
+          
+            <a href="/tags/docker/" rel="tag"># docker</a>
+          
+        </div>
+      
+
+      
+      
+      
+
+      
+        <div class="post-nav">
+          <div class="post-nav-next post-nav-item">
+            
+              <a href="/2021/12/21/k8入门/" rel="next" title="k8s入门">
+                <i class="fa fa-chevron-left"></i> k8s入门
+              </a>
+            
+          </div>
+
+          <span class="post-nav-divider"></span>
+
+          <div class="post-nav-prev post-nav-item">
+            
+          </div>
+        </div>
+      
+
+      
+      
+    </footer>
+  </div>
+  
+  
+  
+  </article>
+
+
+
+    <div class="post-spread">
+      
+    </div>
   </div>
 
 
@@ -429,7 +694,7 @@
             
 
             
-              <div class="post-toc-content"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#联系方式"><span class="nav-number">1.</span> <span class="nav-text">联系方式</span></a></li></ol></div>
+              <div class="post-toc-content"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#1、docker版本变化"><span class="nav-number">1.</span> <span class="nav-text">1、docker版本变化</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#2、docker的镜像"><span class="nav-number">2.</span> <span class="nav-text">2、docker的镜像</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#3、docker的container"><span class="nav-number">3.</span> <span class="nav-text">3、docker的container</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#4、仓库"><span class="nav-number">4.</span> <span class="nav-text">4、仓库</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#5、docker的卷"><span class="nav-number">5.</span> <span class="nav-text">5、docker的卷</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#6、docker的网络"><span class="nav-number">6.</span> <span class="nav-text">6、docker的网络</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#7、docker-compose的使用"><span class="nav-number">7.</span> <span class="nav-text">7、docker-compose的使用</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#8、docker-mechine的使用"><span class="nav-number">8.</span> <span class="nav-text">8、docker-mechine的使用</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#9、docker容器实现安全的机制"><span class="nav-number">9.</span> <span class="nav-text">9、docker容器实现安全的机制</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#10、底层实现"><span class="nav-number">10.</span> <span class="nav-text">10、底层实现</span></a></li></ol></div>
             
 
           </div>
