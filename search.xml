@@ -81,4 +81,111 @@
         <tag>golang</tag>
       </tags>
   </entry>
+  <entry>
+    <title>Go语言的演进</title>
+    <url>/2021/12/20/Go%E8%AF%AD%E8%A8%80%E7%9A%84%E6%BC%94%E8%BF%9B/</url>
+    <content><![CDATA[<p>Go语言诞生于2007年，兴起于2015年Go1.5发布之后，16年大热。</p>
+<h2 id="1、这是什么原因呢？"><a href="#1、这是什么原因呢？" class="headerlink" title="1、这是什么原因呢？"></a>1、这是什么原因呢？</h2><p>主要是重新设计优化 GC 实现。1.5后也实现了完全使用 Go 语言自身进行编写。</p>
+<p>云原生的兴起。Go 语言天生就是为云而生的，在容器中运行时，没有遗留负担。</p>
+<p>（Go 语言在 1.3-1.9 的版本更新，都把 GC 放在重要的改进点上。对于 GC 重新优化实现之后，并且迭代了几个版本，在目前来说，对生产环境中大部分使用 JDK7 或者 JDK8 场景下，对比使用 Go 语言的 1.9 版本，还是 Go 语言上的体验会更好一些。）括号里是废话。</p>
+<h2 id="2、GC需要做什么呢？"><a href="#2、GC需要做什么呢？" class="headerlink" title="2、GC需要做什么呢？"></a>2、GC需要做什么呢？</h2><p>GC(自动内存管理机制)需要确定<strong>哪些内存需要回收，什么时候回收，怎么回收</strong></p>
+<p>在Go中栈上内存仍由编译器负责管理回收，而堆上的内存由编译器和垃圾收集器负责管理回收。</p>
+<h3 id="如何确定哪些内存需要回收？"><a href="#如何确定哪些内存需要回收？" class="headerlink" title="如何确定哪些内存需要回收？"></a>如何确定哪些内存需要回收？</h3><p>利用可达性分析的方法来确认哪些内存需要回收</p>
+<h3 id="什么时候回收？"><a href="#什么时候回收？" class="headerlink" title="什么时候回收？"></a>什么时候回收？</h3><p>触发GC有俩个条件:</p>
+<p>一是堆内存的分配达到控制器计算的触发堆大小，初始大小环境变量GOGC，之后堆内存达到上一次垃圾收集的 2 倍时才会触发GC。</p>
+<p>二是如果一定时间内没有触发，就会触发新的循环，该触发条件由runtime.forcegcperiod变量控制，默认为 2 分钟。</p>
+<h3 id="怎么回收"><a href="#怎么回收" class="headerlink" title="怎么回收"></a>怎么回收</h3><p>Go1.3的时候，用的是标记回收算法。Go1.5的时候，用的是三色标记法。Go1.8的时候采用的是三色标记+混合写屏障</p>
+<h2 id="3、GC优化的历程"><a href="#3、GC优化的历程" class="headerlink" title="3、GC优化的历程"></a>3、GC优化的历程</h2><h3 id="Go-V1-3-之前，采用标记清除算法。"><a href="#Go-V1-3-之前，采用标记清除算法。" class="headerlink" title="Go V1.3 之前，采用标记清除算法。"></a>Go V1.3 之前，采用标记清除算法。</h3><p>算法步骤如下：</p>
+<ul>
+<li>标记(Mark phase)</li>
+<li>清除(Sweep phase)</li>
+</ul>
+<p>第一步：暂停程序业务逻辑, 找出不可达的对象，然后做上标记。</p>
+<p>第二步：开始标记，程序找出它所有可达的对象，并做上标记</p>
+<p>第三步：标记完了之后，然后开始清除未标记的对象.</p>
+<p>第四步：停止暂停，让程序继续跑。然后循环重复这个过程，直到process程序生命周期结束</p>
+<p>缺点是：</p>
+<ul>
+<li>STW，stop the world；让程序暂停，程序出现卡顿 (重要问题)。</li>
+<li>标记需要扫描整个heap</li>
+<li>清除数据会产生heap碎片</li>
+</ul>
+<h3 id="Go-V1-5-的三色并发标记法"><a href="#Go-V1-5-的三色并发标记法" class="headerlink" title="Go V1.5 的三色并发标记法"></a>Go V1.5 的三色并发标记法</h3><p>为了解决标记清楚算法引起的整个程序暂停问题，提出三色并发标记法。</p>
+<p>第一步：将所有对象标记为白色</p>
+<p>第二步：从根节点集合出发，将第一次遍历到的节点标记为灰色放入集合列表中</p>
+<p>第三步：遍历灰色集合，将灰色节点遍历到的白色节点标记为灰色，并把灰色节点标记为黑色</p>
+<p>第四步：循环这个过程</p>
+<p>第五步：直到灰色节点集合为空，回收所有的白色节点</p>
+<p>缺点：<br>    一定要依赖STW的. 因为如果不暂停程序, 程序的逻辑改变对象引用关系, 这种动作如果在标记阶段做了修改，会影响标记结果的正确性。<br>    BUG：当以下两个条件同时满足时, 就会出现对象丢失现象。</p>
+<pre><code>- 条件1: 一个白色对象被黑色对象引用(白色被挂在黑色下)
+- 条件2: 灰色对象与它之间的可达关系的白色对象遭到破坏(灰色同时丢了该白色)
+</code></pre><p>为了防止这种现象的发生，最简单的方式就是STW，直接禁止掉其他用户程序对对象引用关系的干扰，但是STW的过程有明显的资源浪费，对所有的用户程序都有很大影响，如何能在保证对象不丢失的情况下合理的尽可能的提高GC效率，减少STW时间呢？      </p>
+<h3 id="Go-V1-8-的三色标记-混合写屏障-hybrid-write-barrier-机制"><a href="#Go-V1-8-的三色标记-混合写屏障-hybrid-write-barrier-机制" class="headerlink" title="Go V1.8 的三色标记+混合写屏障(hybrid write barrier)机制"></a>Go V1.8 的三色标记+混合写屏障(hybrid write barrier)机制</h3><h4 id="屏障机制："><a href="#屏障机制：" class="headerlink" title="屏障机制："></a>屏障机制：</h4><pre><code>插入屏障机制:在A对象引用B对象的时候，B对象被标记为灰色。(将B挂在A下游，B必须被标记为灰色)  -&gt;强三色不变式. (不存在黑色对象引用白色对象的情况了， 因为白色会强制变成灰色)
+删除屏障机制:被删除的对象，如果自身为灰色或者白色，那么被标记为灰色。-&gt;弱三色不变式. (保护灰色对象到白色对象的路径不会断)
+</code></pre><h4 id="短板："><a href="#短板：" class="headerlink" title="短板："></a>短板：</h4><pre><code>插入写屏障：结束时需要STW来重新扫描栈，标记栈上引用的白色对象的存活；
+删除写屏障：回收精度低，GC开始时STW扫描堆栈来记录初始快照，这个过程会保护开始时刻的所有存活对象。
+</code></pre><p>Go V1.8版本引入了<strong>混合写屏障机制（hybrid write barrier）</strong>，避免了对栈re-scan的过程，极大的减少了STW的时间。结合了两者的优点。</p>
+<ul>
+<li>1、GC开始将栈上的对象全部扫描并标记为黑色(之后不再进行第二次重复扫描，无需STW)，</li>
+<li>2、GC期间，任何在栈上创建的新对象，均为黑色。</li>
+<li>3、被删除的对象标记为灰色。</li>
+<li>4、被添加的对象标记为灰色。<br>满足: 变形的弱三色不变式.</li>
+</ul>
+<h3 id="总结"><a href="#总结" class="headerlink" title="总结:"></a>总结:</h3><p>GoV1.3- 普通标记清除法，整体过程需要启动STW，效率极低。</p>
+<p>GoV1.5- 三色标记法， 堆空间启动写屏障，栈空间不启动，全部扫描之后，需要重新扫描一次栈(需要STW)，效率普通</p>
+<p>GoV1.8-三色标记法，混合写屏障机制， 栈空间不启动，堆空间启动。整个过程几乎不需要STW，效率较高。</p>
+<p><strong>之后可以拓展到TCmalloc算法（内存管理器）</strong></p>
+<h2 id="4、云原生"><a href="#4、云原生" class="headerlink" title="4、云原生"></a>4、云原生</h2><p>云原生的要点可以概括为：DevOps+持续交付+微服务+容器。</p>
+<p>云原生技术有利于各组织在公有云、私有云和混合云等新型动态环境中，构建和运行可弹性扩展的应用。<br>云原生的代表技术包括容器、服务网格、微服务、不可变基础设施和声明式 API。</p>
+<p><img src="/images/golang/base/yunyuansheng.jpg" alt="avatar"></p>
+<h3 id="DevOps"><a href="#DevOps" class="headerlink" title="DevOps:"></a>DevOps:</h3><ul>
+<li>自动化发布管道、CLI工具</li>
+<li>快速地部署到生产环境</li>
+<li>开发、运维人员协同工作</li>
+</ul>
+<p>伴随着DevOps出现，那就是CI和CD。CI是Continuous Integration（持续集成），而CD对应多个英文，Continuous Delivery（持续交付）或Continuous Deployment（持续部署）。</p>
+<h3 id="持续交付"><a href="#持续交付" class="headerlink" title="持续交付:"></a>持续交付:</h3><ul>
+<li>频繁发布、快速交付</li>
+<li>快速反馈，降低风险</li>
+</ul>
+<h3 id="微服务"><a href="#微服务" class="headerlink" title="微服务:"></a>微服务:</h3><ul>
+<li>应用间通过标准restful api访问</li>
+<li>可以被独立部署、更新、scale和重启</li>
+</ul>
+<p>不同的工程师可以对各自负责的模块进行处理，例如开发、测试、部署、迭代。</p>
+<h3 id="容器"><a href="#容器" class="headerlink" title="容器:"></a>容器:</h3><ul>
+<li>微服务的最佳载体</li>
+</ul>
+<p>不是划分为不同的操作系统，而是在操作系统上划分为不同的“运行环境”（Container），占用资源更少，部署速度更快。</p>
+<h2 id="5、Go语言的优略势："><a href="#5、Go语言的优略势：" class="headerlink" title="5、Go语言的优略势："></a>5、Go语言的优略势：</h2><h3 id="Go-语言的核心优势"><a href="#Go-语言的核心优势" class="headerlink" title="Go 语言的核心优势"></a>Go 语言的核心优势</h3><ul>
+<li>高速的效率</li>
+<li>易学习，成本低</li>
+<li>强大的标准库</li>
+<li>简单的高并发</li>
+<li>部署方便</li>
+<li>出身名门、血统纯正</li>
+<li>规范性</li>
+</ul>
+<h3 id="GO语言的缺点"><a href="#GO语言的缺点" class="headerlink" title="GO语言的缺点:"></a>GO语言的缺点:</h3><p>go 2.0 目的是解决目前 go 语言开发者中争议最大的两个问题</p>
+<ul>
+<li>error 处理</li>
+<li>缺乏泛型</li>
+</ul>
+<p>但是每种编程语言都有它适应的场景，在恰当的场景，使用恰当的语言才能发挥最大的优势。</p>
+<h3 id="GO语言的使用项目"><a href="#GO语言的使用项目" class="headerlink" title="GO语言的使用项目"></a>GO语言的使用项目</h3><ul>
+<li>docker  Go 语言的重量级选手 Docker 。而 Docker 的生态圈在这几年完全是非一般的发展。</li>
+<li>kubernetes（k8s）  Google 公司开发的构建于 Docker 之上的容器调度服务，用户可以通过 Kubernetes 集群进行云端容器集群管理。系统会自动选取合适的工作节点来执行具体的容器集群调度处理工作。其核心概念是 Container Pod（容器仓）。</li>
+<li>etcd  一款分布式、可靠的 KV 存储系统，可以快速进行云配置。由 CoreOS 开发并维护键值存储系统，它使用 Go 语言编写，并通过 Raft 一致性算法处理日志复制以保证强一致性。</li>
+<li><p>beego,codis,devle等等</p>
+<p>可以看到，使用 Go 语言的大公司和一些优秀的开源项目都非常之多，并且它就是专门为云上编程的一款语言，而随着基础设施的不断云化，可想而知 Go 语言的未来是不可限量的。</p>
+</li>
+</ul>
+]]></content>
+      <categories>
+        <category>languages</category>
+      </categories>
+      <tags>
+        <tag>golang</tag>
+      </tags>
+  </entry>
 </search>
