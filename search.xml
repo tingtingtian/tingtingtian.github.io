@@ -1,740 +1,295 @@
 <?xml version="1.0" encoding="utf-8"?>
-<search>
-  <entry>
-    <title>Go语言的协程调度原理和GMP设计</title>
-    <url>/2021/12/18/Go%E8%AF%AD%E8%A8%80GMP%E6%A8%A1%E5%9E%8B/</url>
-    <content><![CDATA[<h2 id="单线程时代"><a href="#单线程时代" class="headerlink" title="单线程时代"></a>单线程时代</h2><p>单进程时代不需要调度器，一切串行（存在阻塞问题）</p>
-<h2 id="多进程、线程时代"><a href="#多进程、线程时代" class="headerlink" title="多进程、线程时代"></a>多进程、线程时代</h2><p>多进程时代、线程时代有了调度器（解决了阻塞，进程拥有太多的资源，进程的创建、切换、销毁，都会占用很长的时间，CPU虽然利用起来了，但如果进程过多，CPU有很大的一部分都被用来进行进程调度了。）   设计线程、解决锁、竞争冲突  —–》CPU的利用率低，需要提高CPU的利用率</p>
-<p>多进程、多线程已经提高了系统的并发能力，但是在当今互联网高并发场景下，为每个任务都创建一个线程是不现实的，因为会消耗大量的内存(进程虚拟内存会占用4GB[32位操作系统], 而线程也要大约4MB)。</p>
-<ul>
-<li>大量的进程/线程出现了新的问题</li>
-<li>高内存占用</li>
-<li>调度的高消耗CPU</li>
-</ul>
-<h3 id="协程来提高CPU利用率"><a href="#协程来提高CPU利用率" class="headerlink" title="协程来提高CPU利用率"></a>协程来提高CPU利用率</h3><p>为了解决高内存占用、调度的高消耗CPU的问题，发现一个线程分为“内核态“线程和”用户态“线程。内核线程依然叫“线程(thread)”，用户线程叫“协程(co-routine)”.CPU只可见内核态的线程。<br>既然一个协程(co-routine)可以绑定一个线程(thread)，那么能不能多个协程(co-routine)绑定一个或者多个线程(thread)上呢。答案是可以的。于是协程和线程间的映射关系为N:1。</p>
-<p>N:1的关系有的优缺点：<br>    优点就是协程在用户态线程即完成切换，不会陷入到内核态，这种切换非常的轻量快速。但也有很大的缺点，1个进程的所有协程都绑定在1个线程上：<br>        某个程序用不了硬件的多核加速能力<br>        一旦某协程阻塞，造成线程阻塞，本进程的其他协程都无法执行了，根本就没有并发的能力了。<br>1：1的关系优缺点：<br>    优点：1个协程绑定1个线程，这种最容易实现。协程的调度都由CPU完成了，不存在N:1缺点：协程的创建、删除和切换的代价都由CPU完成，有点略显昂贵了。</p>
-<p>M:N的关系优缺点：<br>    M个协程绑定1个线程，是N:1和1:1类型的结合，克服了以上2种模型的缺点，但实现起来最为复杂。<br>     协程跟线程是有区别的，线程由CPU调度是抢占式的，协程由用户态调度是协作式的，一个协程让出CPU后，才执行下一个协程。</p>
-<h2 id="Go语言的协程goroutine"><a href="#Go语言的协程goroutine" class="headerlink" title="Go语言的协程goroutine"></a>Go语言的协程goroutine</h2><p>Go为了提供更容易使用的并发方法，使用了goroutine和channel。goroutine来自协程的概念，让一组可复用的函数运行在一组线程之上，即使有协程阻塞，该线程的其他协程也可以被runtime调度，转移到其他可运行的线程上。最关键的是，程序员看不到这些底层的细节，这就降低了编程的难度，提供了更容易的并发。<br>Go中，协程被称为goroutine，它非常轻量，一个goroutine只占几KB，并且这几KB就足够goroutine运行完，这就能在有限的内存空间内支持大量goroutine，支持了更多的并发。虽然一个goroutine的栈只占几KB，但实际是可伸缩的，如果需要更多内容，runtime会自动为goroutine分配。<br>Goroutine特点：</p>
-<ul>
-<li>占用内存更小（几kb）</li>
-<li>调度更灵活(runtime调度)</li>
-</ul>
-<h2 id="被废弃的goroutine调度器"><a href="#被废弃的goroutine调度器" class="headerlink" title="被废弃的goroutine调度器"></a>被废弃的goroutine调度器</h2><p>Go目前使用的调度器是2012年重新设计的，因为之前的调度器性能存在问题，所以使用4年就被废弃了，那么我们先来分析一下被废弃的调度器是如何运作的？</p>
-<p>M想要执行、放回G都必须访问全局G队列，并且M有多个，即多线程访问同一资源需要加锁进行保证互斥/同步，所以全局G队列是有互斥锁进行保护的。<br><img src="/images/golang/goroutine/14-old.png" alt="avatar"><br>老调度器有几个缺点：</p>
-<ul>
-<li>创建、销毁、调度G都需要每个M获取锁，这就形成了激烈的锁竞争。</li>
-<li>M转移G会造成延迟和额外的系统负载。比如当G中包含创建新协程的时候，M创建了G’，为了继续执行G，需要把G’交给M’执行，也造成了很差的局部性，因为G’和G是相关的，最好放在M上执行，而不是其他M’。</li>
-<li>系统调用(CPU在M之间的切换)导致频繁的线程阻塞和取消阻塞操作增加了系统开销。</li>
-</ul>
-<h2 id="Goroutine调度器的GMP模型的设计思想"><a href="#Goroutine调度器的GMP模型的设计思想" class="headerlink" title="Goroutine调度器的GMP模型的设计思想"></a>Goroutine调度器的GMP模型的设计思想</h2><h3 id="1-GMP-模型"><a href="#1-GMP-模型" class="headerlink" title="(1) GMP 模型"></a>(1) GMP 模型</h3><ul>
-<li>G-&gt;Goroutine</li>
-<li>M-&gt;Thread线程</li>
-<li>P-&gt;Processor</li>
-</ul>
-<p>线程是运行goroutine的实体，调度器的功能是把可运行的goroutine分配到工作线程上。<br><img src="/images/golang/goroutine/16-gmp.jpg" alt="avatar"></p>
-<ul>
-<li>全局队列（Global Queue）：存放等待运行的G。</li>
-<li>P的本地队列：同全局队列类似，存放的也是等待运行的G，存的数量有限，不超过256个。新建G’时，G’优先加入到P的本地队列，如果队列满了，则会把本地队列中一半的G移动到全局队列。</li>
-<li>P列表：所有的P都在程序启动时创建，并保存在数组中，最多有GOMAXPROCS(可配置)个。</li>
-<li>M：线程想运行任务就得获取P，从P的本地队列获取G，P队列为空时，M也会尝试从全局队列拿一批G放到P的本地队列，或从其他P的本地队列偷一半放到自己P的本地队列。M运行G，G执行之后，M会从P获取下一个G，不断重复下去。</li>
-</ul>
-<p>Goroutine调度器和OS调度器是通过M结合起来的，每个M都代表了1个内核线程，OS调度器负责把内核线程分配到CPU的核上执行。</p>
-<p><strong>有关P和M的个数问题</strong></p>
-<p>1、P的数量：</p>
-<p>由启动时环境变量$GOMAXPROCS或者是由runtime的方法GOMAXPROCS()决定。这意味着在程序执行的任意时刻都只有$GOMAXPROCS个goroutine在同时运行。</p>
-<p>2、M的数量:</p>
-<p>go语言本身的限制：go程序启动时，会设置M的最大数量，默认10000.但是内核很难支持这么多的线程数，所以这个限制可以忽略。<br>runtime/debug中的SetMaxThreads函数，设置M的最大数量<br>一个M阻塞了，会创建新的M。<br>M与P的数量没有绝对关系，一个M阻塞，P就会去创建或者切换另一个M，所以，即使P的默认数量是1，也有可能会创建很多个M出来。</p>
-<p><strong>P和M何时会被创建</strong></p>
-<p>1、P何时创建：在确定了P的最大数量n后，运行时系统会根据这个数量创建n个P。</p>
-<p>2、M何时创建：没有足够的M来关联P并运行其中的可运行的G。比如所有的M此时都阻塞住了，而P中还有很多就绪任务，就会去寻找空闲的M，而没有空闲的，就会去创建新的M。</p>
-<h2 id="2-调度器的设计策略"><a href="#2-调度器的设计策略" class="headerlink" title="(2)调度器的设计策略"></a>(2)调度器的设计策略</h2><h3 id="复用线程：避免频繁的创建、销毁线程，而是对线程的复用。"><a href="#复用线程：避免频繁的创建、销毁线程，而是对线程的复用。" class="headerlink" title="复用线程：避免频繁的创建、销毁线程，而是对线程的复用。"></a>复用线程：避免频繁的创建、销毁线程，而是对线程的复用。</h3><ul>
-<li><p>1）work stealing机制</p>
-<pre><code>当本线程无可运行的G时，尝试从其他线程绑定的P偷取G，而不是销毁线程。
-</code></pre></li>
-<li><p>2）hand off机制</p>
-<pre><code>当本线程因为G进行系统调用阻塞时，线程释放绑定的P，把P转移给其他空闲的线程执行。
-</code></pre></li>
-</ul>
-<h3 id="利用并行："><a href="#利用并行：" class="headerlink" title="利用并行："></a>利用并行：</h3><pre><code>GOMAXPROCS设置P的数量，最多有GOMAXPROCS个线程分布在多个CPU上同时运行。GOMAXPROCS也限制了并发的程度，比如GOMAXPROCS = 核数/2，则最多利用了一半的CPU核进行并行。
-</code></pre><h3 id="抢占："><a href="#抢占：" class="headerlink" title="抢占："></a>抢占：</h3><pre><code>在coroutine中要等待一个协程主动让出CPU才执行下一个协程，在Go中，一个goroutine最多占用CPU 10ms，防止其他goroutine被饿死，这就是goroutine不同于coroutine的一个地方。
-</code></pre><h3 id="全局G队列："><a href="#全局G队列：" class="headerlink" title="全局G队列："></a>全局G队列：</h3><pre><code>在新的调度器中依然有全局G队列，但功能已经被弱化了，当M执行work stealing从其他P偷不到G时，它可以从全局G队列获取G。
-</code></pre><h2 id="3-go-func-调度流程"><a href="#3-go-func-调度流程" class="headerlink" title="(3) go func() 调度流程"></a>(3) go func() 调度流程</h2><p><img src="/images/golang/goroutine/18-go-func.jpeg" alt="avatar"></p>
-<p>从上图我们可以分析出几个结论：</p>
-<p>​  *  1、我们通过 go func()来创建一个goroutine；</p>
-<ul>
-<li>​ 2、有两个存储G的队列，一个是局部调度器P的本地队列、一个是全局G队列。新创建的G会先保存在P的本地队列中，如果P的本地队列已经满了就会保存在全局的队列中；</li>
-<li>​ 3、G只能运行在M中，一个M必须持有一个P，M与P是1：1的关系。M会从P的本地队列弹出一个可执行状态的G来执行，如果P的本地队列为空，就会想其他的MP组合偷取一个可执行的G来执行；</li>
-<li>​ 4、一个M调度G执行的过程是一个循环机制；</li>
-<li>​ 5、当M执行某一个G时候如果发生了syscall或则其余阻塞操作，M会阻塞，如果当前有一些G在执行，runtime会把这个线程M从P中摘除(detach)，然后再创建一个新的操作系统的线程(如果有空闲的线程可用就复用空闲线程)来服务于这个P；</li>
-<li>​ 6、当M系统调用结束时候，这个G会尝试获取一个空闲的P执行，并放入到这个P的本地队列。如果获取不到P，那么这个线程M变成休眠状态， 加入到空闲线程中，然后这个G会被放入全局队列中。</li>
-</ul>
-<h2 id="4-调度器的生命周期"><a href="#4-调度器的生命周期" class="headerlink" title="(4)调度器的生命周期"></a>(4)调度器的生命周期</h2><p><img src="/images/golang/goroutine/17-pic-go.png" alt="avatar"></p>
-<h3 id="M0"><a href="#M0" class="headerlink" title="M0"></a>M0</h3><p>M0是启动程序后的编号为0的主线程，这个M对应的实例会在全局变量runtime.m0中，不需要在heap上分配，M0负责执行初始化操作和启动第一个G， 在之后M0就和其他的M一样了。</p>
-<h3 id="G0"><a href="#G0" class="headerlink" title="G0"></a>G0</h3><p>G0是每次启动一个M都会第一个创建的gourtine，G0仅用于负责调度的G，G0不指向任何可执行的函数, 每个M都会有一个自己的G0。在调度或系统调用时会使用G0的栈空间, 全局变量的G0是M0的G0。</p>
-<p>我们来跟踪一段代码</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">package main</span><br><span class="line">import &quot;fmt&quot;</span><br><span class="line">func main() &#123;</span><br><span class="line">    fmt.Println(&quot;Hello world&quot;)</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p>经历如上图所示的过程：</p>
-<ul>
-<li>runtime创建最初的线程m0和goroutine g0，并把2者关联。</li>
-<li>调度器初始化：初始化m0、栈、垃圾回收，以及创建和初始化由GOMAXPROCS个P构成的P列表。</li>
-<li>示例代码中的main函数是main.main，runtime中也有1个main函数——runtime.main，代码经过编译后，runtime.main会调用main.main，程序启动时会为runtime.main创建goroutine，称它为main goroutine吧，然后把main goroutine加入到P的本地队列。</li>
-<li>启动m0，m0已经绑定了P，会从P的本地队列获取G，获取到main goroutine。</li>
-<li>G拥有栈，M根据G中的栈信息和调度信息设置运行环境</li>
-<li>M运行G</li>
-<li>G退出，再次回到M获取可运行的G，这样重复下去，直到main.main退出，runtime.main执行Defer和Panic处理，或调用runtime.exit退出程序。</li>
-</ul>
-<p>调度器的生命周期几乎占满了一个Go程序的一生，runtime.main的goroutine执行之前都是为调度器做准备工作，runtime.main的goroutine运行，才是调度器的真正开始，直到runtime.main结束而结束。</p>
-<h2 id="5-可视化GMP编程"><a href="#5-可视化GMP编程" class="headerlink" title="(5)可视化GMP编程"></a>(5)可视化GMP编程</h2><h3 id="方式1：go-tool-trace"><a href="#方式1：go-tool-trace" class="headerlink" title="方式1：go tool trace"></a>方式1：go tool trace</h3><p>trace记录了运行时的信息，能提供可视化的Web页面。</p>
-<h3 id="方式2：Debug-trace"><a href="#方式2：Debug-trace" class="headerlink" title="方式2：Debug trace"></a>方式2：Debug trace</h3><p><a href="https://www.topgoer.cn/docs/golangxiuyang/golangxiuyang-1cmeduvk27bo0" target="_blank" rel="noopener">Go的协程调度原理和GMP设计？</a></p>
-]]></content>
+<search> 
+  
+  
+    
+    <entry>
+      <title>k8s入门</title>
+      <link href="/2021/12/22/k8%E5%85%A5%E9%97%A8/"/>
+      <url>/2021/12/22/k8%E5%85%A5%E9%97%A8/</url>
+      
+        <content type="html"><![CDATA[<h2 id="k8s调度"><a href="#k8s调度" class="headerlink" title="k8s调度"></a>k8s调度</h2><p><img src="/images/golang/k8s/k8s_schedule.png" alt="avatar"></p><ul><li><p>kubectl向apiserver发送部署请求（例如使用 kubectl create -f deployment.yml）</p></li><li><p>apiserver将 Deployment 持久化到etcd；etcd与apiserver进行一次http通信。</p></li><li><p>controller manager通过watch api监听 apiserver ，deployment controller看到了一个新创建的deplayment对象更后，将其从队列中拉出，根据deployment的描述创建一个ReplicaSet并将 ReplicaSet 对象返回apiserver并持久化回etcd。 以此类推，当replicaset控制器看到新创建的replicaset对象，将其从队列中拉出，根据描述创建pod对象。</p></li><li><p>接着scheduler调度器看到未调度的pod对象，根据调度规则选择一个可调度的节点，加载到pod描述中nodeName字段，并将pod对象返回apiserver并写入etcd。</p></li><li><p>kubelet在看到有pod对象中nodeName字段属于本节点，将其从队列中拉出，通过容器运行时创建pod中描述的容器。</p></li></ul><h2 id="Kubernetes-API"><a href="#Kubernetes-API" class="headerlink" title="Kubernetes API"></a>Kubernetes API</h2><p>Kubernetes把其<strong>管理的资源</strong>均视为<strong>API对象</strong>，并对外提供REST风格的API来操纵这些对象。Kubernetes API由<strong>kube-apiserver</strong>组件提供，<strong>Kubernetes内部各组件与kube-apiserver通信也是使用API来驱动的</strong>，除此之外，命令行工具比如<strong>kubectl以及各种Kubernetes客户端程序均是使用API与Kubernetes通信</strong>。</p><h3 id="API-格式"><a href="#API-格式" class="headerlink" title="API 格式"></a>API 格式</h3><p>Kubernetes API格式为prefix/group/version/resource，比如表示Deployment资源列表的API为/apis/apps/v1/deployments，其中apis表示前缀，apps表示API组，v1表示API组的版本，deployments表示资源名称，如下图所示：<br><img src="/images/golang/k8s/k8s_api.png" alt="avatar"></p><h2 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h2><p>了解一个应用的功能，从API入手往往能快速地掌握住该应用的概况，包括它是什么，它能用来做什么以及怎么使用它。本节简要地介绍了Kubernetes的API设计，借此可以从宏观上对Kubernetes API有个基本的了解，为将来详细了解每个功能点，也就是每个具体的API打下基础。</p><p>Kubernetes API的分组设计为其提供了无限的扩展能力，借此机制可以轻松地为Kubernetes提供扩展功能，用户不仅可以使用CRD（Custom Resource Definition）功能来提供新的API，还可以通过扩展apiserver来扩展功能。</p><p>在提出API分组理念以前，Kubernetes就存在了以api为前缀的一组API，这了保持兼容性，这组核心API并没有划分到特定的组，它的API格式则是prefix/version/resource（少了group名字），比如/api/v1/Pods。通常我们在说API版本时往往是指group/version，即带上组名和版本，为了描述上的方便，社区开发者日常交流时往往称这组特别的API为core组。</p><h2 id="Pod"><a href="#Pod" class="headerlink" title="Pod"></a>Pod</h2><h3 id="概念："><a href="#概念：" class="headerlink" title="概念："></a>概念：</h3><p>尽管Kubernetes是<strong>容器编排系统</strong>，但它并<strong>不直接管理容器</strong>，它管理的却是名为Pod的对象。<br>Pod是对容器的高级抽像，Pod单词英文含义为豆荚，非常形象地揭示了其于容器的关系，就像一个豆荚中可以含一个或多个豆子一样，<strong>一个Pod也可以包含一个或多个容器</strong>。<br>在Kubernetes中，<strong>Pod是最基础的对象，不管Pod中包含多少容器，Pod的创建和销毁对应的是其包含的所有容器一并创建和销毁</strong>。</p><h3 id="优势"><a href="#优势" class="headerlink" title="优势"></a>优势</h3><p>Pod可以封装容器，借此我们可以在一定程度上完成容器的批量管理</p><h3 id="局限性"><a href="#局限性" class="headerlink" title="局限性"></a>局限性</h3><p>尽管Pod可以封装容器，借此我们可以在一定程度上完成容器的批量管理，但实际上直接创建Pod的场景非常罕见。<br>Kubernetes将Pod视为一种不可靠的资源，它没有自愈能力，当遇到node异常或因资源不足而被驱逐时，Pod将会被删除。<br>为了满足各种场景下管理Pod的诉求，Kubernetes在Pod之上又提供了多种控制器资源，<strong>比如Deployment、StatefulSet和DaemonSet等</strong>，这些控制器可以帮助我们更好的管理Pod，确保Pod总是按照我们预期的行为在运行。</p><h3 id="总结-1"><a href="#总结-1" class="headerlink" title="总结"></a>总结</h3><p>Pod在Kubernetes系统中只是一个资源，它不是一个进程，它是基于容器的抽象，它为一个或多个容器准备运行环境，运行一个Pod，最终还是把容器一个个交给容器运行时来运行。<br>尽管在Kubernetes系统中我们一般不直接创建Pod，但它是最基础的资源，Kubernetes大部分特性都是围绕如何更好地运行、管理Pod而展开，所以必须对Pod有一定的了解才可以开始后面的学习。</p><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">Pod创建：kubectl create -f pod_simple.yaml </span><br><span class="line"></span><br><span class="line">Pod查看：kubectl get pods</span><br><span class="line"></span><br><span class="line">Pod更新：kubectl apply -f pod_simple.yaml </span><br><span class="line"></span><br><span class="line">Pod删除：kubectl delete pods pod-runs-nginx</span><br></pre></td></tr></table></figure><h2 id="Controller"><a href="#Controller" class="headerlink" title="Controller"></a>Controller</h2><h3 id="ReplicationController"><a href="#ReplicationController" class="headerlink" title="ReplicationController"></a>ReplicationController</h3><p>ReplicationController作用是保证副本数。</p><p>Kubernetes集群包含2个Node，每个Node上均运行一个同类型的Pod来做负载均衡，如果其中某个Node被管理员强制关机或者Node意外宕机时，会发生什么呢？如下图：<br><img src="/images/golang/k8s/replicationcontroller-1.png" alt="avatar"><br>由于Pod被调度到某个Node后就与Node绑定，当Node宕机后，Node中的所有Pod也都停止运行。<br>上图所示场景中，Node2被关闭后，相应的Pod-2也会停止，Pod-2并不会重新被调度到Node1。</p><p>实际应用场景中，维持稳定的Pod副本数是非常必要的，因此Kubernetes引入了ReplicationController。</p><p>ReplicationController设计初衷是维持集群中指定类型Pod的副本数，但它只支持等值Selector，不支持基于集合的Selector。为了不违背API兼容性原则，Kubernetes不得已提供了另一种制器ReplicaSet来替换它。</p><p>所以，实际场景中几乎不会用到ReplicationController，虽然它是一个稳定的API。</p><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">ReplicationController创建：kubectl create -f replication_controller_simple.yaml </span><br><span class="line"></span><br><span class="line">ReplicationController查看：kubectl get replicationcontrollers   -&gt;  kubectl get pods  -&gt; kubectl describe replicationcontrollers replication-controller-runs-pod</span><br><span class="line"></span><br><span class="line">ReplicationController更新：kubectl apply -f replication_controller_simple.yaml </span><br><span class="line"></span><br><span class="line">ReplicationController删除： kubectl delete -f replication_controller_simple.yaml    当删除ReplicationController对象时，由该对象创建的Pod默认也会被删除</span><br></pre></td></tr></table></figure><h3 id="ReplicaSet"><a href="#ReplicaSet" class="headerlink" title="ReplicaSet"></a>ReplicaSet</h3><h4 id="ReplicaSet与ReplicationController的区别"><a href="#ReplicaSet与ReplicationController的区别" class="headerlink" title="ReplicaSet与ReplicationController的区别"></a>ReplicaSet与ReplicationController的区别</h4><p>ReplicationController和ReplicaSet都属于Pod控制器，其设计初衷几乎完全相同，都是确保指定类型的Pod副本数维持在期望值，ReplicationController出现时间比ReplicaSet要早，那么为什么已经有了ReplicationController的情况下，还要再设计一个ReplicaSet呢？二者到底有什么区别呢？</p><p>二者的主要区别在于标签选择器，ReplicaSet拥有更先进的标签选择器，<br>ReplicationController只支持旧式的标签选择器，而ReplicaSet不仅支持旧式选择器，还支持新式选择器。</p><p>ReplicationController支持的选择器称为Equality-based选择器，即基于等值的选择器：<br>Selector map[string]string</p><p>ReplicaSet不仅支持Equality-based选择器，还支持Set-based选择器，即基于集合的选择器：<br><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">type LabelSelector struct &#123;</span><br><span class="line">    MatchLabels map[string]string</span><br><span class="line">    MatchExpressions []LabelSelectorRequirement</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p><p>ReplicationController特性演进到V1时还没有支持Set-based选择器，而Kubernetes又希望推出一款支持Set-based选择器的Pod控制器，为了不破坏API兼容性，不得已才推出了ReplicaSet控制器来替代ReplicationController</p><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">ReplicaSet创建：kubectl create -f replicaset.yaml </span><br><span class="line"></span><br><span class="line">ReplicaSet查看：kubectl get replicaset   -&gt;  kubectl get pods  -&gt;kubectl describe replicaset replicaset-runs-pod </span><br><span class="line"></span><br><span class="line">ReplicaSet更新：kubectl edit replicaset replicaset-runs-pod  </span><br><span class="line"></span><br><span class="line">ReplicaSet删除： kubectl delete -f replicaset.yaml   当删除ReplicaSet对象时，由该对象创建的Pod默认也会被删除</span><br></pre></td></tr></table></figure><p><strong>ReplicaSet控制器的能力侧重于对副本数量的把控，它能保证集群中时刻运行指定数量的Pod副本，当配置中Pod副本数量变化时，可以动态地调整Pod数量。</strong></p><h3 id="Deployment"><a href="#Deployment" class="headerlink" title="Deployment"></a>Deployment</h3><p>Deployment是继<strong>ReplicationController和ReplicaSe</strong>t之后推出的更高级的控制器，它通过Deployment对象来声明Pod的期望状态，这些状态包括Pod的副本数和Pod的模版等，运行于kube-controller-manager组件中的Deployment Controller（Deployment控制器）时刻监控Deployment对象的变化，并根据Deployment对象中的配置来调整Pod，最终保证Pod以期望的形态在运行。</p><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">Deployment创建:kubectl create -f deployment.yaml</span><br><span class="line"></span><br><span class="line">Deployment查看:kubectl get deployment  -&gt; kubectl get replicaset   -&gt; kubectl get pods</span><br><span class="line"></span><br><span class="line">Deployment更新:kubectl edit deployments nginx-deployment   </span><br><span class="line"></span><br><span class="line">Deployment删除:kubectl delete deployment nginx-deployment   当删除Deployment资源时，由Deployment控制器创建的ReplicaSet也会被删除，因此由ReplicaSet创建的Pod也会被删除。</span><br></pre></td></tr></table></figure><h3 id="DaemonSet"><a href="#DaemonSet" class="headerlink" title="DaemonSet"></a>DaemonSet</h3><p>DaemonSet是一种面向特定应用场景的Pod控制器，尽管它也可以管理Pod的多个副本，但它主要用于保证一个Node上只运行一个Pod的场景，如下图所示：<br><img src="/images/golang/k8s/daemonset.png" alt="avatar"><br>DaemonSet可以确保一个Node上最多只运行一个Pod副本，进一步说，DaemonSet可以选择特定类型的Node来部署Pod。此处，当选定类型的Node加入集群时，该Node会自动运行一个新的Pod副本，并且当该Node被删除时，相应的Pod也会被删除，而不会在其他Node上重建。</p><p><strong>DaemonSet可以确保每个工作节点上最多运行一个应用副本，这个应用副本类似于Linux操作系统中的daemon进程，这也正是DaemonSet名称的由来</strong></p><p>DaemonSet通常用于管理那些执行系统级的应用，比如：</p><ul><li>每个工作节点运行一个存储服务，供该工作节点上其他应用使用；</li><li>每个工作节点运行一个日志收集服务，用于收集该节点上的运行日志；</li><li>每个工作节点运行一个监控指标收集服务，用于提供该节点的监控信息；</li></ul><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">DaemonSet创建：kubectl create -f daemonset.yaml </span><br><span class="line"></span><br><span class="line">DaemonSet查看：kubectl get daemonset  -&gt;  kubectl get pods -o wide</span><br><span class="line"></span><br><span class="line">DaemonSet更新：kubectl edit daemonset   daemonset.yaml </span><br><span class="line"></span><br><span class="line">DaemonSet删除：kubectl delete daemonsets nginx-daemonset      像其他Pod控制器一样，当删除DaemonSet对象时，其所管理的Pod默认也会被删除</span><br></pre></td></tr></table></figure><h3 id="Statefulset"><a href="#Statefulset" class="headerlink" title="Statefulset"></a>Statefulset</h3><p>StatefulSet是为了解决<strong>有状态服务</strong>的问题（对应Deployments和ReplicaSets是为无状态服务而设计），其应用场景包括</p><ul><li>稳定的持久化存储，即Pod重新调度后还是能访问到相同的持久化数据，基于PVC来实现</li><li>稳定的网络标志，即Pod重新调度后其PodName和HostName不变，基于Headless Service（即没有Cluster IP的Service）来实现</li><li>有序部署，有序扩展，即Pod是有顺序的，在部署或者扩展的时候要依据定义的顺序依次依次进行（即从0到N-1，在下一个Pod运行之前所有之前的Pod必须都是Running和Ready状态），基于init containers来实现</li><li>有序收缩，有序删除（即从N-1到0）</li></ul><p>从上面的应用场景可以发现，StatefulSet由以下几个部分组成：</p><ul><li>用于定义网络标志（DNS domain）的Headless Service</li><li>用于创建PersistentVolumes的volumeClaimTemplates</li><li>定义具体应用的StatefulSet</li></ul><p>StatefulSet中每个Pod的DNS格式为statefulSetName-{0..N-1}.serviceName.namespace.svc.cluster.local，其中</p><ul><li>serviceName为Headless Service的名字</li><li>0..N-1为Pod所在的序号，从0开始到N-1</li><li>statefulSetName为StatefulSet的名字</li><li>namespace为服务所在的namespace，Headless Servic和StatefulSet必须在相同的namespace</li><li>.cluster.local为Cluster Domain，</li></ul><p><strong>StatefulSet注意事项</strong></p><ul><li>还在beta状态，需要kubernetes v1.5版本以上才支持</li><li>所有Pod的Volume必须使用PersistentVolume或者是管理员事先创建好</li><li>为了保证数据安全，删除StatefulSet时不会删除Volume</li><li>StatefulSet需要一个Headless Service来定义DNS domain，需要在StatefulSet之前创建好</li><li>目前StatefulSet还没有feature complete，比如更新操作还需要手动patch。</li></ul><h2 id="Job-和-CronJob"><a href="#Job-和-CronJob" class="headerlink" title="Job 和 CronJob"></a>Job 和 CronJob</h2><p>Job负责处理任务，即仅执行一次的任务，它保证批处理任务的一个或多个Pod成功结束。而CronJob则就是在Job上加上了时间调度。</p><p>一旦 Job 被删除，由 Job 创建的 Pod 也会被删除。注意，所有由名称为 “hello” 的 Cron Job 创建的 Job 会以前缀字符串 “hello-” 进行命名。如果想要删除当前 Namespace 中的所有 Job，可以通过命令 kubectl delete jobs –all 立刻删除它们。</p><p>cronJob使用案例：</p><p>1、在给定时间点调度Job</p><p>2、创建周期性运行的Job。如：数据备份、数仓导数、执行任务、邮件发送、数据拉取、数据推送</p><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br></pre></td><td class="code"><pre><span class="line">Job创建：kubectl create -f ./job.yaml</span><br><span class="line"></span><br><span class="line">Job查看：kubectl get jobs</span><br><span class="line"></span><br><span class="line">cronJob创建：kubectl create -f cronjob-demo.yaml</span><br><span class="line"></span><br><span class="line">cronJob查看：kubectl get cronjob</span><br><span class="line"></span><br><span class="line">cronJob删除：kubectl delete cronjob hello</span><br></pre></td></tr></table></figure><h2 id="Service"><a href="#Service" class="headerlink" title="Service"></a>Service</h2><p>• 防止Pod失联<br>• 定义一组Pod的访问策略</p><p>Service是一种抽像资源，用于暴露运行在Pod中的服务并提供一定的负载均衡能力。</p><p><strong>出现背景</strong>：集群部署时，出现IP随机分配；用户需要提供负载，动态管理Pod并进行流量分发。</p><p>简单地说，Service通过spec.selector来查找Pod，并把这些Pod提供的服务“聚合”起来，对外提供一个统一入口。创建Service对象时，Kubernetes默认会给Service分配一个IP（称为Cluster IP），例如10.0.0.165，Service通过该IP对外提供服务，当请求流量到来时，再把流量转发到后端的Pod，并提供一定的负载均衡能力。整体工作流程如下所示：<br><img src="/images/golang/k8s/service.png" alt="avatar"></p><p>访问Service的Cluster IP，效果与直接访问Pod的IP地址一样，但使用Service可以屏蔽后端Pod细节，对外提供固定的访问入口，当后端的Pod有变动时，Service会自动更新转发列表。</p><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">service创建：kubectl create -f service.yaml </span><br><span class="line"></span><br><span class="line">service查看：kubectl get services nginx-service -o wide    --&gt;  查看Pod拓扑  kubectl get endpoints nginx-service </span><br><span class="line"></span><br><span class="line">service编辑：kubectl edit service nginx-service</span><br><span class="line"></span><br><span class="line">service删除： kubectl delete service nginx-service      ---&gt;  当删除Service对象时，随Service对象创建而自动创建的Endpoints对象也会一并删除，后端的Pod不会被删除，它仍然受相应的Pod控制器管理。</span><br></pre></td></tr></table></figure><h2 id="Secret"><a href="#Secret" class="headerlink" title="Secret"></a>Secret</h2><p>当容器中的应用需要访问容器以外的服务（比如数据库、代码仓库和kube-apiserver等）时，那么不可避免地需要使用相应服务的帐号、密码等凭据（取决于具体服务的要求）。所以如何为容器提供凭据、以及容器中的应用如何使用这些凭据就成了不得不思考的问题。</p><p>在没有Secret之前，为容器提供凭据主要有如下几种方式：</p><ul><li>将凭据硬编码；</li><li>将凭据保存到文件，并最终放置到镜像；</li><li>将凭据保存到文件中，并通过volume的形式挂载到容器；</li></ul><p>首先，将凭据硬编码的方式当然不可取，每次凭据变更都需要重新生成二进制文件。其次将私密的凭据放入镜像，会在镜像分发过程中泄露凭据，同时凭据变更也需要重新制做镜像，变更周期过长。最后，将凭据使用volume的形式挂载到容器这种方式，需要保证volume在多个集群节点共享（或每个节点拥有一个拷贝副本），难以保证凭据的私密性，同时在集群扩容时还需要保证新增节点上能够访问到凭据，维护成本比较大。</p><p>针对以上问题，Kubernetes设计了一个新的名为Secrets的资源类型，专门用来保存私密的凭据，它以键值方式存储凭据，并支持在 Pod 资源中通过环境变量或volume引用。</p><h2 id="ResourceQuota"><a href="#ResourceQuota" class="headerlink" title="ResourceQuota"></a>ResourceQuota</h2><p>ResourceQuota是用于设定资源配额的对象，集群管理员可以为每个namespace创建ResourceQuota对象来限定资源的使用额度，从而可以精准且合理地分配集群资源，避免多个namespace中的对象争抢共享的集群资源。</p><h3 id="ResourceQuota的出现背景"><a href="#ResourceQuota的出现背景" class="headerlink" title="ResourceQuota的出现背景"></a>ResourceQuota的出现背景</h3><p>实际应用场景中，经常出现多用户或者多团队共用同一个集群的情况，管理员往往会为不同用户或团队分配不同的namespace，从而将彼此隔离，但namespace只能做到逻辑上的隔离，多个namespace中的应用仍然会共享集群的硬件资源，比如CPU、内存和存储等，如果某个namespace下的应用大量消耗这些共享资源，那么势必会影响其他namespace下的的应用。</p><p>ResourceQuota正是针对这种问题而提供的一个解决方案。例如，用户A和B共享某个含有16核CPU以及32G内存资源的集群，并且用户A和B分别使用namespace-a和namespace-b，那么管理员可以分别在namespace-a和namespace-b中创建一个ResourceQuota对象，并指定CPU和内存配额（比如平分集群资源），那么用户A和B后续创建的应用资源总消耗量将不会超过该配额，一旦超过该配额，Kubernetes将拒绝创建新的应用。</p><h3 id="ResourceQuota功能启用"><a href="#ResourceQuota功能启用" class="headerlink" title="ResourceQuota功能启用"></a>ResourceQuota功能启用</h3><p>若要启用ResourceQuota功能，需要把字符串“ResourceQuota”加到kube-apiserver的–enable-admission-plugins参数列表中。比如：</p><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"># kube-apiserver &lt;other parameters&gt; --enable-admission-plugins=&quot;ResourceQuota,&lt;other plugins&gt;&quot;</span><br></pre></td></tr></table></figure><p>在绝大多数Kubernetes发行版中，ResourceQuota功能都是默认开启的。</p><h3 id="ResourceQuota资源配置"><a href="#ResourceQuota资源配置" class="headerlink" title="ResourceQuota资源配置"></a>ResourceQuota资源配置</h3><p>一个简单的ResourceQuota配置，如下所示：</p><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">kind: ResourceQuota</span><br><span class="line">metadata:</span><br><span class="line">  name: pod-count</span><br><span class="line">  namespace: default</span><br><span class="line">spec:</span><br><span class="line">  hard:</span><br><span class="line">    pods: &quot;0&quot;</span><br></pre></td></tr></table></figure><p>这份配置将在名为default的namespace中创建一个ResourceQuota对象，该对象将确保在该namespace中“禁止”创建Pod对象。其主要配置如下：</p><p>metadata.namespace：ResourceQuota对象所属的namespace，也是该对象作用的namespace；<br>spec.hard：指定硬性配额列表；<br>spec.hard.pods：为Pod对象个数设置配额；</p><p>ResourceQuota还支持其他更丰富的配置，比如<strong>支持对特性状态的资源实施限额、对特定优先级的资源实施限额</strong>等，这部分内容我们将在后绪的章节中陆续介绍。</p><h3 id="ResourceQuota可限制的资源"><a href="#ResourceQuota可限制的资源" class="headerlink" title="ResourceQuota可限制的资源"></a>ResourceQuota可限制的资源</h3><p>ResourceQuota支持为多种类型的资源设置限额：</p><ul><li>计算类资源，比如CPU、内存等；</li><li>扩展类资源，比如GPU；</li><li>存储类资源，比如持久卷；</li></ul><p>除了这些资源类型以外，还支持限定对象个数，这些对象包括：</p><ul><li>configmaps</li><li>persistentvolumeclaims</li><li>pods</li><li>replicationcontrollers</li><li>resourcequotas</li><li>services</li><li>services.loadbalancers</li><li>services.nodeports</li><li><p>secrets</p><p><strong>Label</strong> ：标签，附加到某个资源上，用于关联对象、查询和筛选<br><strong>Namespaces</strong> ：命名空间，将对象逻辑上隔离<br><strong>Annotations</strong> ：注释</p></li></ul>]]></content>
+      
+      
       <categories>
-        <category>languages</category>
+          
+          <category> schedule </category>
+          
       </categories>
-      <tags>
-        <tag>golang</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>defer执行顺序</title>
-    <url>/2021/12/18/defer%E6%89%A7%E8%A1%8C%E9%A1%BA%E5%BA%8F/</url>
-    <content><![CDATA[<p><strong>知识点1：defer的执行顺序</strong></p>
-<p>多个defer出现的时候，它是一个“栈”的关系，也就是先进后出。一个函数中，写在前面的defer会比写在后面的defer调用的晚。</p>
-<p><strong>知识点2：defer和return的执行顺序</strong></p>
-<p>return之后的语句先执行，defer后的语句后执行</p>
-<p><strong>知识点3：函数的返回值初始化</strong></p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">package main</span><br><span class="line"></span><br><span class="line">import &quot;fmt&quot;</span><br><span class="line"></span><br><span class="line">func DeferFunc1(i int) (t int) &#123;</span><br><span class="line"></span><br><span class="line">    fmt.Println(&quot;t = &quot;, t)</span><br><span class="line"></span><br><span class="line">    return 2</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func main() &#123;</span><br><span class="line">    DeferFunc11(10)</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">结果</span><br><span class="line">t =  0</span><br></pre></td></tr></table></figure>
-<p>只要声明函数的返回值变量名称，就会在函数初始化时候为之赋值为0，而且在函数体作用域可见。</p>
-<p><strong>知识点4：有名函数返回值遇见defer情况</strong></p>
-<p>先return，再defer，所以在执行完return之后，还要再执行defer里的语句，依然可以修改本应该返回的结果。</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">package main</span><br><span class="line"></span><br><span class="line">import &quot;fmt&quot;</span><br><span class="line"></span><br><span class="line">func returnButDefer() (t int) &#123;  //t初始化0， 并且作用域为该函数全域</span><br><span class="line"></span><br><span class="line">    defer func() &#123;</span><br><span class="line">        t = t * 10</span><br><span class="line">    &#125;()</span><br><span class="line"></span><br><span class="line">    return 1</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func main() &#123;</span><br><span class="line">    fmt.Println(returnButDefer())</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">$ go run test.go</span><br><span class="line">10</span><br></pre></td></tr></table></figure>
-<p><strong>知识点5：defer遇见panic</strong></p>
-<p>到panic时，遍历本协程的defer链表，并执行defer。在执行defer过程中:遇到recover则停止panic，返回recover处继续往下执行。如果没有遇到recover，遍历完本协程的defer链表后，向stderr抛出panic信息。</p>
-<p><img src="/images/golang/base/114-defer.jpeg" alt="avatar"></p>
-<p><strong>知识点6: defer中包含panic</strong></p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">package main</span><br><span class="line"></span><br><span class="line">import (</span><br><span class="line">    &quot;fmt&quot;</span><br><span class="line">)</span><br><span class="line"></span><br><span class="line">func main()  &#123;</span><br><span class="line"></span><br><span class="line">    defer func() &#123;</span><br><span class="line">       if err := recover(); err != nil&#123;</span><br><span class="line">           fmt.Println(err)</span><br><span class="line">       &#125;else &#123;</span><br><span class="line">           fmt.Println(&quot;fatal&quot;)</span><br><span class="line">       &#125;</span><br><span class="line">    &#125;()</span><br><span class="line"></span><br><span class="line">    defer func() &#123;</span><br><span class="line">        panic(&quot;defer panic&quot;)</span><br><span class="line">    &#125;()</span><br><span class="line"></span><br><span class="line">    panic(&quot;panic&quot;)</span><br><span class="line">&#125;</span><br><span class="line">结果</span><br><span class="line"></span><br><span class="line">defer panic</span><br></pre></td></tr></table></figure>
-<p><strong>知识点7：defer下的函数参数包含子函数</strong></p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">package main</span><br><span class="line"></span><br><span class="line">import &quot;fmt&quot;</span><br><span class="line"></span><br><span class="line">func function(index int, value int) int &#123;</span><br><span class="line"></span><br><span class="line">    fmt.Println(index)</span><br><span class="line"></span><br><span class="line">    return index</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func main() &#123;</span><br><span class="line">    defer function(1, function(3, 0))</span><br><span class="line">    defer function(2, function(4, 0))</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p> 这里，有4个函数，他们的index序号分别为1，2，3，4。</p>
-<p>那么这4个函数的先后执行顺序是什么呢？这里面有两个defer， 所以defer一共会压栈两次，先进栈1，后进栈2。 那么在压栈function1的时候，需要连同函数地址、函数形参一同进栈，那么为了得到function1的第二个参数的结果，所以就需要先执行function3将第二个参数算出，那么function3就被第一个执行。同理压栈function2，就需要执行function4算出function2第二个参数的值。然后函数结束，先出栈fuction2、再出栈function1.</p>
-<p> 所以顺序如下：</p>
-<p>defer压栈function1，压栈函数地址、形参1、形参2(调用function3) –&gt; 打印3<br>defer压栈function2，压栈函数地址、形参1、形参2(调用function4) –&gt; 打印4<br>defer出栈function2, 调用function2 –&gt; 打印2<br>defer出栈function1, 调用function1–&gt; 打印1<br>3<br>4<br>2<br>1</p>
-<p><a href="https://www.topgoer.cn/docs/golangxiuyang/golangxiuyang-1cmee0q64ij5p" target="_blank" rel="noopener">参考链接</a></p>
-]]></content>
+      
+      
+        <tags>
+            
+            <tag> k8s </tag>
+            
+        </tags>
+      
+    </entry>
+    
+    
+    
+    <entry>
+      <title>docker 入门</title>
+      <link href="/2021/12/21/docker%E5%85%A5%E9%97%A8/"/>
+      <url>/2021/12/21/docker%E5%85%A5%E9%97%A8/</url>
+      
+        <content type="html"><![CDATA[<h2 id="docker版本变化"><a href="#docker版本变化" class="headerlink" title="docker版本变化"></a>docker版本变化</h2><h2 id="docker的镜像"><a href="#docker的镜像" class="headerlink" title="docker的镜像"></a>docker的镜像</h2><ul><li>镜像的拉取  docker pull</li><li>镜像的推送  docker push</li><li>镜像的保存  docker save</li><li>镜像的加载  docker load</li><li>镜像的导入  docker import</li><li>镜像的删除  docker image rm</li><li>镜像的提交  docker commit</li><li>镜像的构建  docker build -t 镜像名 .(这里是上下文对象)</li></ul><h2 id="docker的container"><a href="#docker的container" class="headerlink" title="docker的container"></a>docker的container</h2><ul><li>容器的运行   docker run  -it –name 镜像名称  -p  宿主机端口：容器内端口 (docker start 容器ID/名称)</li><li>容器的进入   docker attach/exec  -it 容器ID/名称  /bin/bash</li><li>容器的退出   exit（Ctrl+d）   （docker stop 容器ID/名称）</li><li>容器的导出   docker export  容器ID/名称 &gt; 镜像名称.tar</li><li>容器的删除   docker container rm 容器ID/名称</li></ul><h2 id="仓库"><a href="#仓库" class="headerlink" title="仓库"></a>仓库</h2><ul><li>Docker Hub</li><li>私有仓库</li></ul><h2 id="docker的卷"><a href="#docker的卷" class="headerlink" title="docker的卷"></a>docker的卷</h2><p>数据卷 是一个可供一个或多个容器使用的特殊目录，它绕过 UFS，可以提供很多有用的特性：</p><ul><li>数据卷 可以在容器之间共享和重用</li><li>对 数据卷 的修改会立马生效</li><li>对 数据卷 的更新，不会影响镜像</li><li>数据卷 默认会一直存在，即使容器被删除<br>注意：数据卷 的使用，类似于 Linux 下对目录或文件进行 mount，镜像中的被指定为挂载点的目录中的文件会隐藏掉，能显示看到的是挂载的 数据卷。</li></ul><ul><li>创建卷   docker volume create 卷的名称</li><li>查看卷   docker volume ls</li><li>删除卷   docker volumr rm</li><li>查看卷的详情  docker volume inspect 卷的名称 </li><li>卷的挂载  在用 docker run 命令的时候，使用 –mount 标记来将 数据卷 挂载到容器里。在一次 docker run 中可以挂载多个 数据卷。下面创建一个名为 web 的容器，并加载一个 数据卷<br>到容器的 /webapp 目录。<figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">docker run -d -P \</span><br><span class="line">--name web \</span><br><span class="line"># -v my-vol:/wepapp \</span><br><span class="line">--mount source=my-vol,target=/webapp \</span><br><span class="line">training/webapp \</span><br><span class="line">python app.py</span><br></pre></td></tr></table></figure></li></ul><h2 id="docker的网络"><a href="#docker的网络" class="headerlink" title="docker的网络"></a>docker的网络</h2><ul><li>网络的创建  docker network create -d bridge 网络名称</li><li>网络的删除  docker network rm 网络名称</li><li>网络的应用  docker run -it –rm –name busybox1 –network 网络名称 容器名称 sh</li></ul><h2 id="docker-compose的使用"><a href="#docker-compose的使用" class="headerlink" title="docker-compose的使用"></a>docker-compose的使用</h2><p>服务 (service)：一个应用容器，实际上可以运行多个相同镜像的实例。<br>项目 (project)：由一组关联的应用容器组成的一个完整业务单元。<br>可见，一个项目可以由多个服务（容器）关联而成，Compose 面向项目进行管理。<br>docker中的DockerFile是一个镜像如何制作的过程，是一个横向的概念。docker中的docker-compose是定义一个项目，即一组应用的集合。是一个纵向的概念。</p><p>docker-compose安装：curl -L <a href="https://get.daocloud.io/docker/compose/releases/download/1.25.0/docker-compose-`uname" target="_blank" rel="noopener">https://get.daocloud.io/docker/compose/releases/download/1.25.0/docker-compose-`uname</a> -s<code>-</code>uname -m` &gt; /usr/local/bin/docker-compose<br>      添加执行权限：chmod +x /usr/local/bin/docker-compose<br>  查看是否安装成功：docker-compose –version</p><ul><li><p>基础命令<br>docker-compose 命令 –help                  #获得一个命令的帮助<br>docker-compose version                     #查看docker-compose版本信息</p></li><li><p>构建、卸载<br>docker-compose up -d C                     #构建启动某个容器<br>docker-compose down                        #停止并删除所有容器、网络、镜像等</p></li><li><p>启动、停止、重启、删除容器<br>docker-compose stop C<br>docker-compose start C<br>docker-compose restart C<br>docker-compose rm C                        #删除容器（删除前必须关闭容器，执行stop）</p></li><li><p>列出所有容器<br>docker-compose ps</p></li><li>进入到容器中<br>docker-compose exec C /bin/bash            #登录到容器中</li><li><p>查看容器的实时日志<br>docker-compose logs  -f  C                  #查看容器的实时日志<br>docker-compose logs –tail 10 -f C          #查看容器的实时日志(从最后10行开始)</p></li><li><p>列出所有镜像<br>docker-compse images</p></li><li><p>检查并查看配置信息<br>docker-compose config                       #配置错误时，会输出错误信息</p></li><li><p>查看各个容器内运行的进程<br>docker-compose top</p></li><li><p>其它<br>docker-compose build C                       #构建镜像<br>docker-compose build –no-cache C            #不带缓存的构建<br>docker-compose events –json C               #以json形式输出容器的日志<br>docker-compose pause C                       #暂停容器<br>docker-compose unpause C                     #恢复容器</p></li></ul><h2 id="docker-mechine的使用"><a href="#docker-mechine的使用" class="headerlink" title="docker-mechine的使用"></a>docker-mechine的使用</h2><p>docker-mechine的安装：base=<a href="https://github.com/docker/machine/releases/download/v0.16.0" target="_blank" rel="noopener">https://github.com/docker/machine/releases/download/v0.16.0</a> &amp;&amp;<br>  curl -L $base/docker-machine-$(uname -s)-$(uname -m) &gt;/tmp/docker-machine &amp;&amp;<br>  mv /tmp/docker-machine /usr/local/bin/docker-machine &amp;&amp;<br>  chmod +x /usr/local/bin/docker-machine</p><p>docker-mechine:创建docker版的虚拟机（创建一个虚拟的 Docker 主机）</p><ul><li>docker-machine config</li><li>docker-machine env</li><li>docker-machine inspect</li><li>docker-machine ip        #这个命令也能让你知道你当前管理的主机IP</li><li>docker-machine kill</li><li>docker-machine provision</li><li>docker-machine regenerate-certs</li><li>docker-machine restart</li><li>docker-machine ssh        #远程ssh连接到docker虚拟机上</li><li>docker-machine start</li><li>docker-machine status</li><li>docker-machine stop        #暂停docker虚拟机</li><li>docker-machine upgrade</li><li>docker-machine url</li></ul><h2 id="docker容器实现安全的机制"><a href="#docker容器实现安全的机制" class="headerlink" title="docker容器实现安全的机制"></a>docker容器实现安全的机制</h2><ul><li>独立的命名空间和控制组集合，命名空间提供了最基础也是最直接的隔离，在容器中运行的进程不会被运行在主机上的进程和其它容器发现和作用。</li><li>服务端防护， Linux 命名空间机制可以实现使用非 root 用户来运行，确保可信用户才能访问共享文件夹；REST API更新；</li><li>内核能力机制  Linux 内核一个强大的特性，可以提供细粒度的权限访问控制</li><li>其它安全策略等等</li></ul><h2 id="底层实现"><a href="#底层实现" class="headerlink" title="底层实现"></a>底层实现</h2><ul><li>基本架构</li><li>命名空间</li><li>控制组</li><li>联合文件系统</li><li>网络</li><li>容器格式<br>最初，Docker 采用了 LXC 中的容器格式。从 0.7 版本以后开始去除 LXC，转而使用自行开发的 libcontainer，从 1.11 开始，则进一步演进为使用 runC 和 containerd。</li></ul>]]></content>
+      
+      
       <categories>
-        <category>languages</category>
+          
+          <category> container </category>
+          
       </categories>
-      <tags>
-        <tag>golang</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Go语言的演进</title>
-    <url>/2021/12/20/Go%E8%AF%AD%E8%A8%80%E7%9A%84%E6%BC%94%E8%BF%9B/</url>
-    <content><![CDATA[<p>Go语言诞生于2007年，兴起于2015年Go1.5发布之后，16年大热。</p>
-<h2 id="这是什么原因呢？"><a href="#这是什么原因呢？" class="headerlink" title="这是什么原因呢？"></a>这是什么原因呢？</h2><p>主要是重新设计优化 GC 实现。1.5后也实现了完全使用 Go 语言自身进行编写。</p>
-<p>云原生的兴起。Go 语言天生就是为云而生的，在容器中运行时，没有遗留负担。</p>
-<p>（Go 语言在 1.3-1.9 的版本更新，都把 GC 放在重要的改进点上。对于 GC 重新优化实现之后，并且迭代了几个版本，在目前来说，对生产环境中大部分使用 JDK7 或者 JDK8 场景下，对比使用 Go 语言的 1.9 版本，还是 Go 语言上的体验会更好一些。）括号里是废话。</p>
-<h2 id="GC需要做什么呢？"><a href="#GC需要做什么呢？" class="headerlink" title="GC需要做什么呢？"></a>GC需要做什么呢？</h2><p>GC(自动内存管理机制)需要确定<strong>哪些内存需要回收，什么时候回收，怎么回收</strong></p>
-<p>在Go中栈上内存仍由编译器负责管理回收，而堆上的内存由编译器和垃圾收集器负责管理回收。</p>
-<h3 id="如何确定哪些内存需要回收？"><a href="#如何确定哪些内存需要回收？" class="headerlink" title="如何确定哪些内存需要回收？"></a>如何确定哪些内存需要回收？</h3><p>利用可达性分析的方法来确认哪些内存需要回收</p>
-<h3 id="什么时候回收？"><a href="#什么时候回收？" class="headerlink" title="什么时候回收？"></a>什么时候回收？</h3><p>触发GC有俩个条件:</p>
-<p>一是堆内存的分配达到控制器计算的触发堆大小，初始大小环境变量GOGC，之后堆内存达到上一次垃圾收集的 2 倍时才会触发GC。</p>
-<p>二是如果一定时间内没有触发，就会触发新的循环，该触发条件由runtime.forcegcperiod变量控制，默认为 2 分钟。</p>
-<h3 id="怎么回收"><a href="#怎么回收" class="headerlink" title="怎么回收"></a>怎么回收</h3><p>Go1.3的时候，用的是标记回收算法。Go1.5的时候，用的是三色标记法。Go1.8的时候采用的是三色标记+混合写屏障</p>
-<h2 id="GC优化的历程"><a href="#GC优化的历程" class="headerlink" title="GC优化的历程"></a>GC优化的历程</h2><h3 id="Go-V1-3-之前，采用标记清除算法。"><a href="#Go-V1-3-之前，采用标记清除算法。" class="headerlink" title="Go V1.3 之前，采用标记清除算法。"></a>Go V1.3 之前，采用标记清除算法。</h3><p>算法步骤如下：</p>
-<ul>
-<li>标记(Mark phase)</li>
-<li>清除(Sweep phase)</li>
-</ul>
-<p>第一步：暂停程序业务逻辑, 找出不可达的对象，然后做上标记。</p>
-<p>第二步：开始标记，程序找出它所有可达的对象，并做上标记</p>
-<p>第三步：标记完了之后，然后开始清除未标记的对象.</p>
-<p>第四步：停止暂停，让程序继续跑。然后循环重复这个过程，直到process程序生命周期结束</p>
-<p>缺点是：</p>
-<ul>
-<li>STW，stop the world；让程序暂停，程序出现卡顿 (重要问题)。</li>
-<li>标记需要扫描整个heap</li>
-<li>清除数据会产生heap碎片</li>
-</ul>
-<h3 id="Go-V1-5-的三色并发标记法"><a href="#Go-V1-5-的三色并发标记法" class="headerlink" title="Go V1.5 的三色并发标记法"></a>Go V1.5 的三色并发标记法</h3><p>为了解决标记清楚算法引起的整个程序暂停问题，提出三色并发标记法。</p>
-<p>第一步：将所有对象标记为白色</p>
-<p>第二步：从根节点集合出发，将第一次遍历到的节点标记为灰色放入集合列表中</p>
-<p>第三步：遍历灰色集合，将灰色节点遍历到的白色节点标记为灰色，并把灰色节点标记为黑色</p>
-<p>第四步：循环这个过程</p>
-<p>第五步：直到灰色节点集合为空，回收所有的白色节点</p>
-<p>缺点：<br>    一定要依赖STW的. 因为如果不暂停程序, 程序的逻辑改变对象引用关系, 这种动作如果在标记阶段做了修改，会影响标记结果的正确性。<br>    BUG：当以下两个条件同时满足时, 就会出现对象丢失现象。</p>
-<pre><code>- 条件1: 一个白色对象被黑色对象引用(白色被挂在黑色下)
-- 条件2: 灰色对象与它之间的可达关系的白色对象遭到破坏(灰色同时丢了该白色)
-</code></pre><p>为了防止这种现象的发生，最简单的方式就是STW，直接禁止掉其他用户程序对对象引用关系的干扰，但是STW的过程有明显的资源浪费，对所有的用户程序都有很大影响，如何能在保证对象不丢失的情况下合理的尽可能的提高GC效率，减少STW时间呢？      </p>
-<h3 id="Go-V1-8-的三色标记-混合写屏障-hybrid-write-barrier-机制"><a href="#Go-V1-8-的三色标记-混合写屏障-hybrid-write-barrier-机制" class="headerlink" title="Go V1.8 的三色标记+混合写屏障(hybrid write barrier)机制"></a>Go V1.8 的三色标记+混合写屏障(hybrid write barrier)机制</h3><h4 id="屏障机制："><a href="#屏障机制：" class="headerlink" title="屏障机制："></a>屏障机制：</h4><pre><code>插入屏障机制:在A对象引用B对象的时候，B对象被标记为灰色。(将B挂在A下游，B必须被标记为灰色)  -&gt;强三色不变式. (不存在黑色对象引用白色对象的情况了， 因为白色会强制变成灰色)
-删除屏障机制:被删除的对象，如果自身为灰色或者白色，那么被标记为灰色。-&gt;弱三色不变式. (保护灰色对象到白色对象的路径不会断)
-</code></pre><h4 id="短板："><a href="#短板：" class="headerlink" title="短板："></a>短板：</h4><pre><code>插入写屏障：结束时需要STW来重新扫描栈，标记栈上引用的白色对象的存活；
-删除写屏障：回收精度低，GC开始时STW扫描堆栈来记录初始快照，这个过程会保护开始时刻的所有存活对象。
-</code></pre><p>Go V1.8版本引入了<strong>混合写屏障机制（hybrid write barrier）</strong>，避免了对栈re-scan的过程，极大的减少了STW的时间。结合了两者的优点。</p>
-<ul>
-<li>1、GC开始将栈上的对象全部扫描并标记为黑色(之后不再进行第二次重复扫描，无需STW)，</li>
-<li>2、GC期间，任何在栈上创建的新对象，均为黑色。</li>
-<li>3、被删除的对象标记为灰色。</li>
-<li>4、被添加的对象标记为灰色。<br>满足: 变形的弱三色不变式.</li>
-</ul>
-<h3 id="总结"><a href="#总结" class="headerlink" title="总结:"></a>总结:</h3><p>GoV1.3- 普通标记清除法，整体过程需要启动STW，效率极低。</p>
-<p>GoV1.5- 三色标记法， 堆空间启动写屏障，栈空间不启动，全部扫描之后，需要重新扫描一次栈(需要STW)，效率普通</p>
-<p>GoV1.8-三色标记法，混合写屏障机制， 栈空间不启动，堆空间启动。整个过程几乎不需要STW，效率较高。</p>
-<p><strong>之后可以拓展到TCmalloc算法（内存管理器）</strong></p>
-<h2 id="云原生"><a href="#云原生" class="headerlink" title="云原生"></a>云原生</h2><p>云原生的要点可以概括为：DevOps+持续交付+微服务+容器。</p>
-<p>云原生技术有利于各组织在公有云、私有云和混合云等新型动态环境中，构建和运行可弹性扩展的应用。<br>云原生的代表技术包括容器、服务网格、微服务、不可变基础设施和声明式 API。</p>
-<p><img src="/images/golang/base/yunyuansheng.jpg" alt="avatar"></p>
-<h3 id="DevOps"><a href="#DevOps" class="headerlink" title="DevOps:"></a>DevOps:</h3><ul>
-<li>自动化发布管道、CLI工具</li>
-<li>快速地部署到生产环境</li>
-<li>开发、运维人员协同工作</li>
-</ul>
-<p>伴随着DevOps出现，那就是CI和CD。CI是Continuous Integration（持续集成），而CD对应多个英文，Continuous Delivery（持续交付）或Continuous Deployment（持续部署）。</p>
-<h3 id="持续交付"><a href="#持续交付" class="headerlink" title="持续交付:"></a>持续交付:</h3><ul>
-<li>频繁发布、快速交付</li>
-<li>快速反馈，降低风险</li>
-</ul>
-<h3 id="微服务"><a href="#微服务" class="headerlink" title="微服务:"></a>微服务:</h3><ul>
-<li>应用间通过标准restful api访问</li>
-<li>可以被独立部署、更新、scale和重启</li>
-</ul>
-<p>不同的工程师可以对各自负责的模块进行处理，例如开发、测试、部署、迭代。</p>
-<h3 id="容器"><a href="#容器" class="headerlink" title="容器:"></a>容器:</h3><ul>
-<li>微服务的最佳载体</li>
-</ul>
-<p>不是划分为不同的操作系统，而是在操作系统上划分为不同的“运行环境”（Container），占用资源更少，部署速度更快。</p>
-<h2 id="Go语言的优略势："><a href="#Go语言的优略势：" class="headerlink" title="Go语言的优略势："></a>Go语言的优略势：</h2><h3 id="Go-语言的核心优势"><a href="#Go-语言的核心优势" class="headerlink" title="Go 语言的核心优势"></a>Go 语言的核心优势</h3><ul>
-<li>高速的效率</li>
-<li>易学习，成本低</li>
-<li>强大的标准库</li>
-<li>简单的高并发</li>
-<li>部署方便</li>
-<li>出身名门、血统纯正</li>
-<li>规范性</li>
-</ul>
-<h3 id="GO语言的缺点"><a href="#GO语言的缺点" class="headerlink" title="GO语言的缺点:"></a>GO语言的缺点:</h3><p>go 2.0 目的是解决目前 go 语言开发者中争议最大的两个问题</p>
-<ul>
-<li>error 处理</li>
-<li>缺乏泛型</li>
-</ul>
-<p>但是每种编程语言都有它适应的场景，在恰当的场景，使用恰当的语言才能发挥最大的优势。</p>
-<h3 id="GO语言的使用项目"><a href="#GO语言的使用项目" class="headerlink" title="GO语言的使用项目"></a>GO语言的使用项目</h3><ul>
-<li>docker  Go 语言的重量级选手 Docker 。而 Docker 的生态圈在这几年完全是非一般的发展。</li>
-<li>kubernetes（k8s）  Google 公司开发的构建于 Docker 之上的容器调度服务，用户可以通过 Kubernetes 集群进行云端容器集群管理。系统会自动选取合适的工作节点来执行具体的容器集群调度处理工作。其核心概念是 Container Pod（容器仓）。</li>
-<li>etcd  一款分布式、可靠的 KV 存储系统，可以快速进行云配置。由 CoreOS 开发并维护键值存储系统，它使用 Go 语言编写，并通过 Raft 一致性算法处理日志复制以保证强一致性。</li>
-<li><p>beego,codis,devle等等</p>
-<p>可以看到，使用 Go 语言的大公司和一些优秀的开源项目都非常之多，并且它就是专门为云上编程的一款语言，而随着基础设施的不断云化，可想而知 Go 语言的未来是不可限量的。</p>
-</li>
-</ul>
-]]></content>
+      
+      
+        <tags>
+            
+            <tag> docker </tag>
+            
+        </tags>
+      
+    </entry>
+    
+    
+    
+    <entry>
+      <title>interface 基础特性和使用</title>
+      <link href="/2021/12/20/interface%E6%8E%A5%E5%8F%A3%E7%9A%84%E4%BD%BF%E7%94%A8%E5%92%8C%E8%AE%BE%E8%AE%A1/"/>
+      <url>/2021/12/20/interface%E6%8E%A5%E5%8F%A3%E7%9A%84%E4%BD%BF%E7%94%A8%E5%92%8C%E8%AE%BE%E8%AE%A1/</url>
+      
+        <content type="html"><![CDATA[<p>interface 是GO语言的基础特性之一。可以理解为一种类型的规范或者约定。它跟java，C# 不太一样，不需要显示说明实现了某个接口，它没有继承或子类或“implements”关键字，只是通过约定的形式，隐式的实现interface 中的方法即可。因此，Golang 中的 interface 让编码<strong>更灵活、易扩展。</strong></p><p>如何理解go 语言中的interface ？ 只需记住以下三点即可：</p><ul><li>interface 是方法声明的集合</li><li>任何类型的对象实现了在interface 接口中声明的全部方法，则表明该类型实现了该接口。</li><li>interface 可以作为一种数据类型，实现了该接口的任何对象都可以给对应的接口类型变量赋值。</li></ul><p><strong>注意：</strong></p><ul><li>a. interface 可以被任意对象实现，一个类型/对象也可以实现多个 interface</li><li>b. 方法不能重载，如 eat(), eat(s string) 不能同时存在</li></ul><p><strong>开闭原则</strong></p><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br></pre></td><td class="code"><pre><span class="line">package domain</span><br><span class="line"></span><br><span class="line">/**</span><br><span class="line">该设计符合开闭原则</span><br><span class="line">**/</span><br><span class="line"></span><br><span class="line">//普通书</span><br><span class="line">type OriBook struct &#123;</span><br><span class="line">Id   string</span><br><span class="line">Name string</span><br><span class="line">Type string</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">//高级书</span><br><span class="line">type HighBook struct &#123;</span><br><span class="line">Id     string</span><br><span class="line">Name   string</span><br><span class="line">Type   string</span><br><span class="line">Author string</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">//操作</span><br><span class="line">type BookDao interface &#123;</span><br><span class="line">GetBook()</span><br><span class="line">AddBook()</span><br><span class="line">EditBook()</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">type OriBookDaoImp struct &#123;</span><br><span class="line">oriBook OriBook</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func (o *OriBookDaoImp) GetBook() &#123;</span><br><span class="line"></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">type HighBookDaoImpl struct &#123;</span><br><span class="line">highBook HighBook</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func (o *HighBookDaoImpl) GetBook() &#123;</span><br><span class="line"></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func GetBookDao(book *BookDao) &#123;</span><br><span class="line">book.GetBook()</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func AddBookDao(book *BookDao) &#123;</span><br><span class="line">book.AddBook()</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func EditBookDao(book *BookDao) &#123;</span><br><span class="line">book.EditBook()</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure><p><strong>依赖倒转</strong></p><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br><span class="line">74</span><br><span class="line">75</span><br><span class="line">76</span><br><span class="line">77</span><br><span class="line">78</span><br><span class="line">79</span><br><span class="line">80</span><br><span class="line">81</span><br><span class="line">82</span><br><span class="line">83</span><br><span class="line">84</span><br><span class="line">85</span><br><span class="line">86</span><br><span class="line">87</span><br><span class="line">88</span><br><span class="line">89</span><br><span class="line">90</span><br><span class="line">91</span><br><span class="line">92</span><br><span class="line">93</span><br><span class="line">94</span><br><span class="line">95</span><br><span class="line">96</span><br><span class="line">97</span><br><span class="line">98</span><br><span class="line">99</span><br><span class="line">100</span><br><span class="line">101</span><br><span class="line">102</span><br><span class="line">103</span><br><span class="line">104</span><br><span class="line">105</span><br><span class="line">106</span><br><span class="line">107</span><br><span class="line">108</span><br><span class="line">109</span><br></pre></td><td class="code"><pre><span class="line">/*</span><br><span class="line">   符合依赖倒转原则</span><br><span class="line"></span><br><span class="line">   模拟组装2台电脑</span><br><span class="line">   --- 抽象层 ---</span><br><span class="line">   有显卡Card  方法display</span><br><span class="line">   有内存Memory 方法storage</span><br><span class="line">   有处理器CPU   方法calculate</span><br><span class="line"></span><br><span class="line">   --- 实现层层 ---</span><br><span class="line">   有 Intel因特尔公司 、产品有(显卡、内存、CPU)</span><br><span class="line">   有 Kingston 公司， 产品有(内存3)</span><br><span class="line">   有 NVIDIA 公司， 产品有(显卡)</span><br><span class="line"></span><br><span class="line">   --- 逻辑层 ---</span><br><span class="line">   1. 组装一台Intel系列的电脑，并运行</span><br><span class="line">   2. 组装一台 Intel CPU  Kingston内存 NVIDIA显卡的电脑，并运行</span><br><span class="line">*/</span><br><span class="line">package main</span><br><span class="line"></span><br><span class="line">import &quot;fmt&quot;</span><br><span class="line"></span><br><span class="line">//------  抽象层 -----</span><br><span class="line">type Card interface &#123;</span><br><span class="line">Display()</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">type Memory interface &#123;</span><br><span class="line">Storage()</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">type CPU interface &#123;</span><br><span class="line">Calculate()</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">type Computer struct &#123;</span><br><span class="line">cpu  CPU</span><br><span class="line">mem  Memory</span><br><span class="line">card Card</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func NewComputer(cpu CPU, mem Memory, card Card) *Computer &#123;</span><br><span class="line">return &amp;Computer&#123;</span><br><span class="line">cpu:  cpu,</span><br><span class="line">mem:  mem,</span><br><span class="line">card: card,</span><br><span class="line">&#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func (this *Computer) DoWork() &#123;</span><br><span class="line">this.cpu.Calculate()</span><br><span class="line">this.mem.Storage()</span><br><span class="line">this.card.Display()</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">//------  实现层 -----</span><br><span class="line">//intel</span><br><span class="line">type IntelCPU struct &#123;</span><br><span class="line">CPU</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func (this *IntelCPU) Calculate() &#123;</span><br><span class="line">fmt.Println(&quot;Intel CPU 开始计算了...&quot;)</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">type IntelMemory struct &#123;</span><br><span class="line">Memory</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func (this *IntelMemory) Storage() &#123;</span><br><span class="line">fmt.Println(&quot;Intel Memory 开始存储了...&quot;)</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">type IntelCard struct &#123;</span><br><span class="line">Card</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func (this *IntelCard) Display() &#123;</span><br><span class="line">fmt.Println(&quot;Intel Card 开始显示了...&quot;)</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">//kingston</span><br><span class="line">type KingstonMemory struct &#123;</span><br><span class="line">Memory</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func (this *KingstonMemory) Storage() &#123;</span><br><span class="line">fmt.Println(&quot;Kingston memory storage...&quot;)</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">//nvidia</span><br><span class="line">type NvidiaCard struct &#123;</span><br><span class="line">Card</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func (this *NvidiaCard) Display() &#123;</span><br><span class="line">fmt.Println(&quot;Nvidia card display...&quot;)</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">//------  业务逻辑层 -----</span><br><span class="line">func main() &#123;</span><br><span class="line">//intel系列的电脑</span><br><span class="line">com1 := NewComputer(&amp;IntelCPU&#123;&#125;, &amp;IntelMemory&#123;&#125;, &amp;IntelCard&#123;&#125;)</span><br><span class="line">com1.DoWork()</span><br><span class="line"></span><br><span class="line">//杂牌子</span><br><span class="line">com2 := NewComputer(&amp;IntelCPU&#123;&#125;, &amp;KingstonMemory&#123;&#125;, &amp;NvidiaCard&#123;&#125;)</span><br><span class="line">com2.DoWork()</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>]]></content>
+      
+      
       <categories>
-        <category>languages</category>
+          
+          <category> languages </category>
+          
       </categories>
-      <tags>
-        <tag>golang</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>Go中逃逸分析</title>
-    <url>/2021/12/18/Go%E4%B8%AD%E9%80%83%E9%80%B8%E5%88%86%E6%9E%90/</url>
-    <content><![CDATA[<p>go语言编译器会自动决定把一个变量放在栈还是放在堆，编译器会做逃逸分析(escape analysis)，<strong>当发现变量的作用域没有跑出函数范围，就可以在栈上，反之则必须分配在堆</strong>。<br>go语言声称这样可以释放程序员关于内存的使用限制，更多的让程序员关注于程序功能逻辑本身。</p>
-<p>Golang中一个函数内局部变量，不管是不是动态new出来的，它会被分配在堆还是栈，是由编译器做逃逸分析之后做出的决定。</p>
-]]></content>
+      
+      
+        <tags>
+            
+            <tag> golang </tag>
+            
+        </tags>
+      
+    </entry>
+    
+    
+    
+    <entry>
+      <title>Go语言的演进</title>
+      <link href="/2021/12/20/Go%E8%AF%AD%E8%A8%80%E7%9A%84%E6%BC%94%E8%BF%9B/"/>
+      <url>/2021/12/20/Go%E8%AF%AD%E8%A8%80%E7%9A%84%E6%BC%94%E8%BF%9B/</url>
+      
+        <content type="html"><![CDATA[<p>Go语言诞生于2007年，兴起于2015年Go1.5发布之后，16年大热。</p><h2 id="这是什么原因呢？"><a href="#这是什么原因呢？" class="headerlink" title="这是什么原因呢？"></a>这是什么原因呢？</h2><p>主要是重新设计优化 GC 实现。1.5后也实现了完全使用 Go 语言自身进行编写。</p><p>云原生的兴起。Go 语言天生就是为云而生的，在容器中运行时，没有遗留负担。</p><p>（Go 语言在 1.3-1.9 的版本更新，都把 GC 放在重要的改进点上。对于 GC 重新优化实现之后，并且迭代了几个版本，在目前来说，对生产环境中大部分使用 JDK7 或者 JDK8 场景下，对比使用 Go 语言的 1.9 版本，还是 Go 语言上的体验会更好一些。）括号里是废话。</p><h2 id="GC需要做什么呢？"><a href="#GC需要做什么呢？" class="headerlink" title="GC需要做什么呢？"></a>GC需要做什么呢？</h2><p>GC(自动内存管理机制)需要确定<strong>哪些内存需要回收，什么时候回收，怎么回收</strong></p><p>在Go中栈上内存仍由编译器负责管理回收，而堆上的内存由编译器和垃圾收集器负责管理回收。</p><h3 id="如何确定哪些内存需要回收？"><a href="#如何确定哪些内存需要回收？" class="headerlink" title="如何确定哪些内存需要回收？"></a>如何确定哪些内存需要回收？</h3><p>利用可达性分析的方法来确认哪些内存需要回收</p><h3 id="什么时候回收？"><a href="#什么时候回收？" class="headerlink" title="什么时候回收？"></a>什么时候回收？</h3><p>触发GC有俩个条件:</p><p>一是堆内存的分配达到控制器计算的触发堆大小，初始大小环境变量GOGC，之后堆内存达到上一次垃圾收集的 2 倍时才会触发GC。</p><p>二是如果一定时间内没有触发，就会触发新的循环，该触发条件由runtime.forcegcperiod变量控制，默认为 2 分钟。</p><h3 id="怎么回收"><a href="#怎么回收" class="headerlink" title="怎么回收"></a>怎么回收</h3><p>Go1.3的时候，用的是标记回收算法。Go1.5的时候，用的是三色标记法。Go1.8的时候采用的是三色标记+混合写屏障</p><h2 id="GC优化的历程"><a href="#GC优化的历程" class="headerlink" title="GC优化的历程"></a>GC优化的历程</h2><h3 id="Go-V1-3-之前，采用标记清除算法。"><a href="#Go-V1-3-之前，采用标记清除算法。" class="headerlink" title="Go V1.3 之前，采用标记清除算法。"></a>Go V1.3 之前，采用标记清除算法。</h3><p>算法步骤如下：</p><ul><li>标记(Mark phase)</li><li>清除(Sweep phase)</li></ul><p>第一步：暂停程序业务逻辑, 找出不可达的对象，然后做上标记。</p><p>第二步：开始标记，程序找出它所有可达的对象，并做上标记</p><p>第三步：标记完了之后，然后开始清除未标记的对象.</p><p>第四步：停止暂停，让程序继续跑。然后循环重复这个过程，直到process程序生命周期结束</p><p>缺点是：</p><ul><li>STW，stop the world；让程序暂停，程序出现卡顿 (重要问题)。</li><li>标记需要扫描整个heap</li><li>清除数据会产生heap碎片</li></ul><h3 id="Go-V1-5-的三色并发标记法"><a href="#Go-V1-5-的三色并发标记法" class="headerlink" title="Go V1.5 的三色并发标记法"></a>Go V1.5 的三色并发标记法</h3><p>为了解决标记清楚算法引起的整个程序暂停问题，提出三色并发标记法。</p><p>第一步：将所有对象标记为白色</p><p>第二步：从根节点集合出发，将第一次遍历到的节点标记为灰色放入集合列表中</p><p>第三步：遍历灰色集合，将灰色节点遍历到的白色节点标记为灰色，并把灰色节点标记为黑色</p><p>第四步：循环这个过程</p><p>第五步：直到灰色节点集合为空，回收所有的白色节点</p><p>缺点：<br>    一定要依赖STW的. 因为如果不暂停程序, 程序的逻辑改变对象引用关系, 这种动作如果在标记阶段做了修改，会影响标记结果的正确性。<br>    BUG：当以下两个条件同时满足时, 就会出现对象丢失现象。</p><pre><code>- 条件1: 一个白色对象被黑色对象引用(白色被挂在黑色下)- 条件2: 灰色对象与它之间的可达关系的白色对象遭到破坏(灰色同时丢了该白色)</code></pre><p>为了防止这种现象的发生，最简单的方式就是STW，直接禁止掉其他用户程序对对象引用关系的干扰，但是STW的过程有明显的资源浪费，对所有的用户程序都有很大影响，如何能在保证对象不丢失的情况下合理的尽可能的提高GC效率，减少STW时间呢？      </p><h3 id="Go-V1-8-的三色标记-混合写屏障-hybrid-write-barrier-机制"><a href="#Go-V1-8-的三色标记-混合写屏障-hybrid-write-barrier-机制" class="headerlink" title="Go V1.8 的三色标记+混合写屏障(hybrid write barrier)机制"></a>Go V1.8 的三色标记+混合写屏障(hybrid write barrier)机制</h3><h4 id="屏障机制："><a href="#屏障机制：" class="headerlink" title="屏障机制："></a>屏障机制：</h4><pre><code>插入屏障机制:在A对象引用B对象的时候，B对象被标记为灰色。(将B挂在A下游，B必须被标记为灰色)  -&gt;强三色不变式. (不存在黑色对象引用白色对象的情况了， 因为白色会强制变成灰色)删除屏障机制:被删除的对象，如果自身为灰色或者白色，那么被标记为灰色。-&gt;弱三色不变式. (保护灰色对象到白色对象的路径不会断)</code></pre><h4 id="短板："><a href="#短板：" class="headerlink" title="短板："></a>短板：</h4><pre><code>插入写屏障：结束时需要STW来重新扫描栈，标记栈上引用的白色对象的存活；删除写屏障：回收精度低，GC开始时STW扫描堆栈来记录初始快照，这个过程会保护开始时刻的所有存活对象。</code></pre><p>Go V1.8版本引入了<strong>混合写屏障机制（hybrid write barrier）</strong>，避免了对栈re-scan的过程，极大的减少了STW的时间。结合了两者的优点。</p><ul><li>1、GC开始将栈上的对象全部扫描并标记为黑色(之后不再进行第二次重复扫描，无需STW)，</li><li>2、GC期间，任何在栈上创建的新对象，均为黑色。</li><li>3、被删除的对象标记为灰色。</li><li>4、被添加的对象标记为灰色。<br>满足: 变形的弱三色不变式.</li></ul><h3 id="总结"><a href="#总结" class="headerlink" title="总结:"></a>总结:</h3><p>GoV1.3- 普通标记清除法，整体过程需要启动STW，效率极低。</p><p>GoV1.5- 三色标记法， 堆空间启动写屏障，栈空间不启动，全部扫描之后，需要重新扫描一次栈(需要STW)，效率普通</p><p>GoV1.8-三色标记法，混合写屏障机制， 栈空间不启动，堆空间启动。整个过程几乎不需要STW，效率较高。</p><p><strong>之后可以拓展到TCmalloc算法（内存管理器）</strong></p><h2 id="云原生"><a href="#云原生" class="headerlink" title="云原生"></a>云原生</h2><p>云原生的要点可以概括为：DevOps+持续交付+微服务+容器。</p><p>云原生技术有利于各组织在公有云、私有云和混合云等新型动态环境中，构建和运行可弹性扩展的应用。<br>云原生的代表技术包括容器、服务网格、微服务、不可变基础设施和声明式 API。</p><p><img src="/images/golang/base/yunyuansheng.jpg" alt="avatar"></p><h3 id="DevOps"><a href="#DevOps" class="headerlink" title="DevOps:"></a>DevOps:</h3><ul><li>自动化发布管道、CLI工具</li><li>快速地部署到生产环境</li><li>开发、运维人员协同工作</li></ul><p>伴随着DevOps出现，那就是CI和CD。CI是Continuous Integration（持续集成），而CD对应多个英文，Continuous Delivery（持续交付）或Continuous Deployment（持续部署）。</p><h3 id="持续交付"><a href="#持续交付" class="headerlink" title="持续交付:"></a>持续交付:</h3><ul><li>频繁发布、快速交付</li><li>快速反馈，降低风险</li></ul><h3 id="微服务"><a href="#微服务" class="headerlink" title="微服务:"></a>微服务:</h3><ul><li>应用间通过标准restful api访问</li><li>可以被独立部署、更新、scale和重启</li></ul><p>不同的工程师可以对各自负责的模块进行处理，例如开发、测试、部署、迭代。</p><h3 id="容器"><a href="#容器" class="headerlink" title="容器:"></a>容器:</h3><ul><li>微服务的最佳载体</li></ul><p>不是划分为不同的操作系统，而是在操作系统上划分为不同的“运行环境”（Container），占用资源更少，部署速度更快。</p><h2 id="Go语言的优略势："><a href="#Go语言的优略势：" class="headerlink" title="Go语言的优略势："></a>Go语言的优略势：</h2><h3 id="Go-语言的核心优势"><a href="#Go-语言的核心优势" class="headerlink" title="Go 语言的核心优势"></a>Go 语言的核心优势</h3><ul><li>高速的效率</li><li>易学习，成本低</li><li>强大的标准库</li><li>简单的高并发</li><li>部署方便</li><li>出身名门、血统纯正</li><li>规范性</li></ul><h3 id="GO语言的缺点"><a href="#GO语言的缺点" class="headerlink" title="GO语言的缺点:"></a>GO语言的缺点:</h3><p>go 2.0 目的是解决目前 go 语言开发者中争议最大的两个问题</p><ul><li>error 处理</li><li>缺乏泛型</li></ul><p>但是每种编程语言都有它适应的场景，在恰当的场景，使用恰当的语言才能发挥最大的优势。</p><h3 id="GO语言的使用项目"><a href="#GO语言的使用项目" class="headerlink" title="GO语言的使用项目"></a>GO语言的使用项目</h3><ul><li>docker  Go 语言的重量级选手 Docker 。而 Docker 的生态圈在这几年完全是非一般的发展。</li><li>kubernetes（k8s）  Google 公司开发的构建于 Docker 之上的容器调度服务，用户可以通过 Kubernetes 集群进行云端容器集群管理。系统会自动选取合适的工作节点来执行具体的容器集群调度处理工作。其核心概念是 Container Pod（容器仓）。</li><li>etcd  一款分布式、可靠的 KV 存储系统，可以快速进行云配置。由 CoreOS 开发并维护键值存储系统，它使用 Go 语言编写，并通过 Raft 一致性算法处理日志复制以保证强一致性。</li><li><p>beego,codis,devle等等</p><p>可以看到，使用 Go 语言的大公司和一些优秀的开源项目都非常之多，并且它就是专门为云上编程的一款语言，而随着基础设施的不断云化，可想而知 Go 语言的未来是不可限量的。</p></li></ul>]]></content>
+      
+      
       <categories>
-        <category>languages</category>
+          
+          <category> languages </category>
+          
       </categories>
-      <tags>
-        <tag>golang</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>etcd 入门</title>
-    <url>/2021/12/18/etcd%E5%85%A5%E9%97%A8/</url>
-    <content><![CDATA[<h2 id="etcd的简介"><a href="#etcd的简介" class="headerlink" title="etcd的简介"></a>etcd的简介</h2><p>etcd 是 <strong>CoreOS 团队</strong>于 2013 年 6 月发起的开源项目，它的目标是构建一个<strong>高可用的分布式键值（key-value）数据库</strong>，基于 Go 语言实现。在分布式系统中，各种服务的配置信息的管理分享，<strong>服务的发现</strong>是一个很基本同时也是很重要的问题。CoreOS 项目就希望基于 etcd 来解决这一问题。</p>
-<h2 id="为什么要学习etcd"><a href="#为什么要学习etcd" class="headerlink" title="为什么要学习etcd"></a>为什么要学习etcd</h2><h3 id="etcd的优点"><a href="#etcd的优点" class="headerlink" title="etcd的优点"></a>etcd的优点</h3><pre><code>简单：具有定义良好、面向用户的 API (gRPC)
-
-安全：支持 HTTPS 方式的访问
-
-快速：支持并发 10 k/s 的写操作
-
-可靠：支持分布式结构，基于 Raft 的一致性算法
-</code></pre><h3 id="etcd的应用场景"><a href="#etcd的应用场景" class="headerlink" title="etcd的应用场景"></a>etcd的应用场景</h3><pre><code>- 分布式服务发现（etcd是一种分布式存储，更强调的是各个节点之间的通信，同步，确保各个节点上数据和事务的一致性，使得服务发现工作更稳定，本身单节点的写入能力并不强）
-
-- 消息发布和订阅
-
-- 负载均衡
-
-- 分布式通知与协调
-
-- 分布式锁
-
-- 分布式队列
-
-- 集群监控与Leader竞选
-</code></pre><h2 id="怎么使用etcd"><a href="#怎么使用etcd" class="headerlink" title="怎么使用etcd"></a>怎么使用etcd</h2><ul>
-<li>Go语言中如何使用</li>
-<li>Java语言中如何使用</li>
-</ul>
-<h2 id="etcd原理"><a href="#etcd原理" class="headerlink" title="etcd原理"></a>etcd原理</h2><p>每个ETCD节点都维护了一个状态机，并且，任意时刻至多存在一个有效的主节点。主节点处理所有来自客户端写操作，通过Raft协议保证写操作对状态机的改动会可靠的同步到其他节点。</p>
-<h3 id="ETCD工作原理核心部分在于Raft协议"><a href="#ETCD工作原理核心部分在于Raft协议" class="headerlink" title="ETCD工作原理核心部分在于Raft协议"></a>ETCD工作原理核心部分在于Raft协议</h3><p>Raft协议:</p>
-<ul>
-<li>选主</li>
-<li>日志复制</li>
-<li>安全性</li>
-</ul>
-<h3 id="etcd使用中出现的问题"><a href="#etcd使用中出现的问题" class="headerlink" title="etcd使用中出现的问题"></a>etcd使用中出现的问题</h3><ul>
-<li>集群id不匹配   删除不一致的数据   删除data_dir的方法基本是修复etcd集群最通用的方法，因为相当于清掉之前的数据，重新建立起一个新的etcd集群。但如果集群中的数据很重要，则只能另寻他径了。除非你有做额外的数据备份，可以随时将数据恢复过来。</li>
-</ul>
-<h2 id="etcd和zookpeer的区别"><a href="#etcd和zookpeer的区别" class="headerlink" title="etcd和zookpeer的区别"></a>etcd和zookpeer的区别</h2><p>ETCD vs ZK</p>
-<p>本文选取ZK作为典型代表与ETCD进行比较，而不考虑[Consul]项目作为比较对象，原因为Consul的可靠性和稳定性还需要时间来验证（项目发起方自身服务并未使用Consul, 自己都不用)。</p>
-<p>1.一致性协议： ETCD使用[Raft]协议， ZK使用ZAB（类PAXOS协议），前者容易理解，方便工程实现；</p>
-<p>2.运维方面：ETCD方便运维，ZK难以运维；</p>
-<p>3.项目活跃度：ETCD社区与开发活跃，ZK已经快死了；</p>
-<p>4.API：ETCD提供HTTP+JSON, gRPC接口，跨平台跨语言，ZK需要使用其客户端；</p>
-<p>5.访问安全方面：ETCD支持HTTPS访问，ZK在这方面缺失 </p>
-<p><a href="https://www.cnblogs.com/ricklz/p/15033193.html" target="_blank" rel="noopener">参考链接</a></p>
-]]></content>
+      
+      
+        <tags>
+            
+            <tag> golang </tag>
+            
+        </tags>
+      
+    </entry>
+    
+    
+    
+    <entry>
+      <title>etcd 入门</title>
+      <link href="/2021/12/18/etcd%E5%85%A5%E9%97%A8/"/>
+      <url>/2021/12/18/etcd%E5%85%A5%E9%97%A8/</url>
+      
+        <content type="html"><![CDATA[<h2 id="etcd的简介"><a href="#etcd的简介" class="headerlink" title="etcd的简介"></a>etcd的简介</h2><p>etcd 是 <strong>CoreOS 团队</strong>于 2013 年 6 月发起的开源项目，它的目标是构建一个<strong>高可用的分布式键值（key-value）数据库</strong>，基于 Go 语言实现。在分布式系统中，各种服务的配置信息的管理分享，<strong>服务的发现</strong>是一个很基本同时也是很重要的问题。CoreOS 项目就希望基于 etcd 来解决这一问题。</p><h2 id="为什么要学习etcd"><a href="#为什么要学习etcd" class="headerlink" title="为什么要学习etcd"></a>为什么要学习etcd</h2><h3 id="etcd的优点"><a href="#etcd的优点" class="headerlink" title="etcd的优点"></a>etcd的优点</h3><pre><code>简单：具有定义良好、面向用户的 API (gRPC)安全：支持 HTTPS 方式的访问快速：支持并发 10 k/s 的写操作可靠：支持分布式结构，基于 Raft 的一致性算法</code></pre><h3 id="etcd的应用场景"><a href="#etcd的应用场景" class="headerlink" title="etcd的应用场景"></a>etcd的应用场景</h3><pre><code>- 分布式服务发现（etcd是一种分布式存储，更强调的是各个节点之间的通信，同步，确保各个节点上数据和事务的一致性，使得服务发现工作更稳定，本身单节点的写入能力并不强）- 消息发布和订阅- 负载均衡- 分布式通知与协调- 分布式锁- 分布式队列- 集群监控与Leader竞选</code></pre><h2 id="怎么使用etcd"><a href="#怎么使用etcd" class="headerlink" title="怎么使用etcd"></a>怎么使用etcd</h2><ul><li>Go语言中如何使用</li><li>Java语言中如何使用</li></ul><h2 id="etcd原理"><a href="#etcd原理" class="headerlink" title="etcd原理"></a>etcd原理</h2><p>每个ETCD节点都维护了一个状态机，并且，任意时刻至多存在一个有效的主节点。主节点处理所有来自客户端写操作，通过Raft协议保证写操作对状态机的改动会可靠的同步到其他节点。</p><h3 id="ETCD工作原理核心部分在于Raft协议"><a href="#ETCD工作原理核心部分在于Raft协议" class="headerlink" title="ETCD工作原理核心部分在于Raft协议"></a>ETCD工作原理核心部分在于Raft协议</h3><p>Raft协议:</p><ul><li>选主</li><li>日志复制</li><li>安全性</li></ul><h3 id="etcd使用中出现的问题"><a href="#etcd使用中出现的问题" class="headerlink" title="etcd使用中出现的问题"></a>etcd使用中出现的问题</h3><ul><li>集群id不匹配   删除不一致的数据   删除data_dir的方法基本是修复etcd集群最通用的方法，因为相当于清掉之前的数据，重新建立起一个新的etcd集群。但如果集群中的数据很重要，则只能另寻他径了。除非你有做额外的数据备份，可以随时将数据恢复过来。</li></ul><h2 id="etcd和zookpeer的区别"><a href="#etcd和zookpeer的区别" class="headerlink" title="etcd和zookpeer的区别"></a>etcd和zookpeer的区别</h2><p>ETCD vs ZK</p><p>本文选取ZK作为典型代表与ETCD进行比较，而不考虑[Consul]项目作为比较对象，原因为Consul的可靠性和稳定性还需要时间来验证（项目发起方自身服务并未使用Consul, 自己都不用)。</p><p>1.一致性协议： ETCD使用[Raft]协议， ZK使用ZAB（类PAXOS协议），前者容易理解，方便工程实现；</p><p>2.运维方面：ETCD方便运维，ZK难以运维；</p><p>3.项目活跃度：ETCD社区与开发活跃，ZK已经快死了；</p><p>4.API：ETCD提供HTTP+JSON, gRPC接口，跨平台跨语言，ZK需要使用其客户端；</p><p>5.访问安全方面：ETCD支持HTTPS访问，ZK在这方面缺失 </p><p><a href="https://www.cnblogs.com/ricklz/p/15033193.html" target="_blank" rel="noopener">参考链接</a></p>]]></content>
+      
+      
       <categories>
-        <category>中间件</category>
+          
+          <category> 中间件 </category>
+          
       </categories>
-      <tags>
-        <tag>中间件</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>debug以及性能实践</title>
-    <url>/2021/12/18/debug%E5%8F%8A%E6%80%A7%E8%83%BD%E9%97%AE%E9%A2%98%E5%AE%9E%E8%B7%B5/</url>
-    <content><![CDATA[<h2 id="debug以及网络相关"><a href="#debug以及网络相关" class="headerlink" title="debug以及网络相关"></a>debug以及网络相关</h2><p><strong>流</strong>：可以进行I/O操作的内核对象   文件、管道、套接字……   流的入口：文件描述符(fd)<br><strong>IO</strong>: 对流的读写操作<br><strong>阻塞</strong>：当流中写满了数据  我们的IO操作就出现了阻塞现象，包括阻塞死等待   非阻塞，忙轮询</p>
-<p><strong>阻塞死等待</strong>：空出大脑(线程)可以安心睡觉, 不影响快递员(CPU)工作（不占用CPU宝贵的时间片）。 —-&gt;有优势  但是缺点<br>非阻塞，忙轮询：浪费时间，浪费电话费（IO），占用快递员(CPU)时间（占用CPU，系统资源）。</p>
-<h2 id="怎么解决阻塞死等待的问题？"><a href="#怎么解决阻塞死等待的问题？" class="headerlink" title="怎么解决阻塞死等待的问题？"></a>怎么解决阻塞死等待的问题？</h2><p>1、采用多线程或者多进程（影分术），单线程时代是噩梦   ——&gt;未实现多路复用<br>2、非阻塞、忙轮询：非阻塞忙轮询的方式，可以让用户分别与每个快递员取得联系，宏观上来看，是同时可以与多个快递员沟通(并发效果)、 但是快递员在于用户沟通时耽误前进的速度(浪费CPU)。<br>3、select:开设一个代收网点，让快递员全部送到代收点。这个网店管理员叫select。这样我们就可以在家休息了，麻烦的事交给select就好了。当有快递的时候，select负责给我们打电话，期间在家休息睡觉就好了。但select 代收员比较懒，她记不住快递员的单号，还有快递货物的数量。她只会告诉你快递到了，但是是谁到的，你需要挨个快递员问一遍。(select代理，但是不知道流中的信息)<br><figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">while true &#123;</span><br><span class="line">    for i in 流[] &#123;</span><br><span class="line">        if i has 数据 &#123;</span><br><span class="line">            读 或者 其他处理</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
-<p>4、epoll：服务态度要比select好很多，在通知我们的时候，不仅告诉我们有几个快递到了，还分别告诉我们是谁谁谁。我们只需要按照epoll给的答复，来询问快递员取快递即可。（epoll代理，知道流中的信息）<br><figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">while true &#123;</span><br><span class="line">    可处理的流[] = epoll_wait(epoll_fd); //阻塞</span><br><span class="line">  //有消息抵达，全部放在 “可处理的流[]”中</span><br><span class="line">    for i in 可处理的流[] &#123;</span><br><span class="line">        读 或者 其他处理</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
-<h2 id="epoll-红黑树"><a href="#epoll-红黑树" class="headerlink" title="epoll(红黑树)"></a>epoll(红黑树)</h2><ul>
-<li>普通列表项目与select，poll一样，对I/O多路复用的技术</li>
-<li>普通列表项目只关心“活跃”的链接，无需遍历全部描述符集合</li>
-<li>普通列表项目能够处理大量的链接请求(系统可以打开的文件数目)</li>
-</ul>
-<h2 id="epoll的API"><a href="#epoll的API" class="headerlink" title="epoll的API"></a>epoll的API</h2><figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">   **创建epoll:**int epoll_create(int size);  //size 告诉内核监听的数目   返回一个epoll句柄（即一个文件描述符）</span><br><span class="line"></span><br><span class="line">   **控制epoll:**int epoll_ctl(int epfd, int op, int fd,struct epoll_event *event);</span><br><span class="line"></span><br><span class="line">  * @param epfd 用epoll_create所创建的epoll句柄</span><br><span class="line">  * @param op 表示对epoll监控描述符控制的动作</span><br><span class="line">       * EPOLL_CTL_ADD(注册新的fd到epfd)</span><br><span class="line">       * EPOLL_CTL_MOD(修改已经注册的fd的监听事件)</span><br><span class="line">       * EPOLL_CTL_DEL(epfd删除一个fd)</span><br><span class="line">  * @param fd 需要监听的文件描述符</span><br><span class="line">  * @param event 告诉内核需要监听的事件</span><br><span class="line">  *</span><br><span class="line">  * @returns 成功返回0，失败返回-1, errno查看错误信息</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">* **等待epoll:**int epoll_wait(int epfd, struct epoll_event *event,int maxevents, int timeout);</span><br><span class="line">*</span><br><span class="line">* @param epfd 用epoll_create所创建的epoll句柄</span><br><span class="line">* @param event 从内核得到的事件集合</span><br><span class="line">* @param maxevents 告知内核这个events有多大,</span><br><span class="line">* 注意: 值 不能大于创建epoll_create()时的size.</span><br><span class="line">* @param timeout 超时时间</span><br><span class="line">     * -1: 永久阻塞</span><br><span class="line">     * 0: 立即返回，非阻塞</span><br><span class="line">     * &gt;0: 指定微秒</span><br><span class="line">* @returns 成功: 有多少文件描述符就绪,时间到时返回0</span><br><span class="line">* 失败: -1, errno 查看错误</span><br></pre></td></tr></table></figure>
-]]></content>
+      
+      
+        <tags>
+            
+            <tag> 中间件 </tag>
+            
+        </tags>
+      
+    </entry>
+    
+    
+    
+    <entry>
+      <title>debug以及性能实践</title>
+      <link href="/2021/12/18/debug%E5%8F%8A%E6%80%A7%E8%83%BD%E9%97%AE%E9%A2%98%E5%AE%9E%E8%B7%B5/"/>
+      <url>/2021/12/18/debug%E5%8F%8A%E6%80%A7%E8%83%BD%E9%97%AE%E9%A2%98%E5%AE%9E%E8%B7%B5/</url>
+      
+        <content type="html"><![CDATA[<h2 id="debug以及网络相关"><a href="#debug以及网络相关" class="headerlink" title="debug以及网络相关"></a>debug以及网络相关</h2><p><strong>流</strong>：可以进行I/O操作的内核对象   文件、管道、套接字……   流的入口：文件描述符(fd)<br><strong>IO</strong>: 对流的读写操作<br><strong>阻塞</strong>：当流中写满了数据  我们的IO操作就出现了阻塞现象，包括阻塞死等待   非阻塞，忙轮询</p><p><strong>阻塞死等待</strong>：空出大脑(线程)可以安心睡觉, 不影响快递员(CPU)工作（不占用CPU宝贵的时间片）。 —-&gt;有优势  但是缺点<br>非阻塞，忙轮询：浪费时间，浪费电话费（IO），占用快递员(CPU)时间（占用CPU，系统资源）。</p><h2 id="怎么解决阻塞死等待的问题？"><a href="#怎么解决阻塞死等待的问题？" class="headerlink" title="怎么解决阻塞死等待的问题？"></a>怎么解决阻塞死等待的问题？</h2><p>1、采用多线程或者多进程（影分术），单线程时代是噩梦   ——&gt;未实现多路复用<br>2、非阻塞、忙轮询：非阻塞忙轮询的方式，可以让用户分别与每个快递员取得联系，宏观上来看，是同时可以与多个快递员沟通(并发效果)、 但是快递员在于用户沟通时耽误前进的速度(浪费CPU)。<br>3、select:开设一个代收网点，让快递员全部送到代收点。这个网店管理员叫select。这样我们就可以在家休息了，麻烦的事交给select就好了。当有快递的时候，select负责给我们打电话，期间在家休息睡觉就好了。但select 代收员比较懒，她记不住快递员的单号，还有快递货物的数量。她只会告诉你快递到了，但是是谁到的，你需要挨个快递员问一遍。(select代理，但是不知道流中的信息)<br><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">while true &#123;</span><br><span class="line">    for i in 流[] &#123;</span><br><span class="line">        if i has 数据 &#123;</span><br><span class="line">            读 或者 其他处理</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p><p>4、epoll：服务态度要比select好很多，在通知我们的时候，不仅告诉我们有几个快递到了，还分别告诉我们是谁谁谁。我们只需要按照epoll给的答复，来询问快递员取快递即可。（epoll代理，知道流中的信息）<br><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line">while true &#123;</span><br><span class="line">    可处理的流[] = epoll_wait(epoll_fd); //阻塞</span><br><span class="line">  //有消息抵达，全部放在 “可处理的流[]”中</span><br><span class="line">    for i in 可处理的流[] &#123;</span><br><span class="line">        读 或者 其他处理</span><br><span class="line">    &#125;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p><h2 id="epoll-红黑树"><a href="#epoll-红黑树" class="headerlink" title="epoll(红黑树)"></a>epoll(红黑树)</h2><ul><li>普通列表项目与select，poll一样，对I/O多路复用的技术</li><li>普通列表项目只关心“活跃”的链接，无需遍历全部描述符集合</li><li>普通列表项目能够处理大量的链接请求(系统可以打开的文件数目)</li></ul><h2 id="epoll的API"><a href="#epoll的API" class="headerlink" title="epoll的API"></a>epoll的API</h2><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br></pre></td><td class="code"><pre><span class="line">   **创建epoll:**int epoll_create(int size);  //size 告诉内核监听的数目   返回一个epoll句柄（即一个文件描述符）</span><br><span class="line"></span><br><span class="line">   **控制epoll:**int epoll_ctl(int epfd, int op, int fd,struct epoll_event *event);</span><br><span class="line"></span><br><span class="line">  * @param epfd 用epoll_create所创建的epoll句柄</span><br><span class="line">  * @param op 表示对epoll监控描述符控制的动作</span><br><span class="line">       * EPOLL_CTL_ADD(注册新的fd到epfd)</span><br><span class="line">       * EPOLL_CTL_MOD(修改已经注册的fd的监听事件)</span><br><span class="line">       * EPOLL_CTL_DEL(epfd删除一个fd)</span><br><span class="line">  * @param fd 需要监听的文件描述符</span><br><span class="line">  * @param event 告诉内核需要监听的事件</span><br><span class="line">  *</span><br><span class="line">  * @returns 成功返回0，失败返回-1, errno查看错误信息</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">* **等待epoll:**int epoll_wait(int epfd, struct epoll_event *event,int maxevents, int timeout);</span><br><span class="line">*</span><br><span class="line">* @param epfd 用epoll_create所创建的epoll句柄</span><br><span class="line">* @param event 从内核得到的事件集合</span><br><span class="line">* @param maxevents 告知内核这个events有多大,</span><br><span class="line">* 注意: 值 不能大于创建epoll_create()时的size.</span><br><span class="line">* @param timeout 超时时间</span><br><span class="line">     * -1: 永久阻塞</span><br><span class="line">     * 0: 立即返回，非阻塞</span><br><span class="line">     * &gt;0: 指定微秒</span><br><span class="line">* @returns 成功: 有多少文件描述符就绪,时间到时返回0</span><br><span class="line">* 失败: -1, errno 查看错误</span><br></pre></td></tr></table></figure>]]></content>
+      
+      
       <categories>
-        <category>languages</category>
+          
+          <category> languages </category>
+          
       </categories>
-      <tags>
-        <tag>golang</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>docker 入门</title>
-    <url>/2021/12/21/docker%E5%85%A5%E9%97%A8/</url>
-    <content><![CDATA[<h2 id="docker版本变化"><a href="#docker版本变化" class="headerlink" title="docker版本变化"></a>docker版本变化</h2><h2 id="docker的镜像"><a href="#docker的镜像" class="headerlink" title="docker的镜像"></a>docker的镜像</h2><ul>
-<li>镜像的拉取  docker pull</li>
-<li>镜像的推送  docker push</li>
-<li>镜像的保存  docker save</li>
-<li>镜像的加载  docker load</li>
-<li>镜像的导入  docker import</li>
-<li>镜像的删除  docker image rm</li>
-<li>镜像的提交  docker commit</li>
-<li>镜像的构建  docker build -t 镜像名 .(这里是上下文对象)</li>
-</ul>
-<h2 id="docker的container"><a href="#docker的container" class="headerlink" title="docker的container"></a>docker的container</h2><ul>
-<li>容器的运行   docker run  -it –name 镜像名称  -p  宿主机端口：容器内端口 (docker start 容器ID/名称)</li>
-<li>容器的进入   docker attach/exec  -it 容器ID/名称  /bin/bash</li>
-<li>容器的退出   exit（Ctrl+d）   （docker stop 容器ID/名称）</li>
-<li>容器的导出   docker export  容器ID/名称 &gt; 镜像名称.tar</li>
-<li>容器的删除   docker container rm 容器ID/名称</li>
-</ul>
-<h2 id="仓库"><a href="#仓库" class="headerlink" title="仓库"></a>仓库</h2><ul>
-<li>Docker Hub</li>
-<li>私有仓库</li>
-</ul>
-<h2 id="docker的卷"><a href="#docker的卷" class="headerlink" title="docker的卷"></a>docker的卷</h2><p>数据卷 是一个可供一个或多个容器使用的特殊目录，它绕过 UFS，可以提供很多有用的特性：</p>
-<ul>
-<li>数据卷 可以在容器之间共享和重用</li>
-<li>对 数据卷 的修改会立马生效</li>
-<li>对 数据卷 的更新，不会影响镜像</li>
-<li>数据卷 默认会一直存在，即使容器被删除<br>注意：数据卷 的使用，类似于 Linux 下对目录或文件进行 mount，镜像中的被指定为挂载点的目录中的文件会隐藏掉，能显示看到的是挂载的 数据卷。</li>
-</ul>
-<ul>
-<li>创建卷   docker volume create 卷的名称</li>
-<li>查看卷   docker volume ls</li>
-<li>删除卷   docker volumr rm</li>
-<li>查看卷的详情  docker volume inspect 卷的名称 </li>
-<li>卷的挂载  在用 docker run 命令的时候，使用 –mount 标记来将 数据卷 挂载到容器里。在一次 docker run 中可以挂载多个 数据卷。下面创建一个名为 web 的容器，并加载一个 数据卷<br>到容器的 /webapp 目录。<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">docker run -d -P \</span><br><span class="line">--name web \</span><br><span class="line"># -v my-vol:/wepapp \</span><br><span class="line">--mount source=my-vol,target=/webapp \</span><br><span class="line">training/webapp \</span><br><span class="line">python app.py</span><br></pre></td></tr></table></figure>
-</li>
-</ul>
-<h2 id="docker的网络"><a href="#docker的网络" class="headerlink" title="docker的网络"></a>docker的网络</h2><ul>
-<li>网络的创建  docker network create -d bridge 网络名称</li>
-<li>网络的删除  docker network rm 网络名称</li>
-<li>网络的应用  docker run -it –rm –name busybox1 –network 网络名称 容器名称 sh</li>
-</ul>
-<h2 id="docker-compose的使用"><a href="#docker-compose的使用" class="headerlink" title="docker-compose的使用"></a>docker-compose的使用</h2><p>服务 (service)：一个应用容器，实际上可以运行多个相同镜像的实例。<br>项目 (project)：由一组关联的应用容器组成的一个完整业务单元。<br>可见，一个项目可以由多个服务（容器）关联而成，Compose 面向项目进行管理。<br>docker中的DockerFile是一个镜像如何制作的过程，是一个横向的概念。docker中的docker-compose是定义一个项目，即一组应用的集合。是一个纵向的概念。</p>
-<p>docker-compose安装：curl -L <a href="https://get.daocloud.io/docker/compose/releases/download/1.25.0/docker-compose-`uname" target="_blank" rel="noopener">https://get.daocloud.io/docker/compose/releases/download/1.25.0/docker-compose-`uname</a> -s<code>-</code>uname -m` &gt; /usr/local/bin/docker-compose<br>      添加执行权限：chmod +x /usr/local/bin/docker-compose<br>  查看是否安装成功：docker-compose –version</p>
-<ul>
-<li><p>基础命令<br>docker-compose 命令 –help                  #获得一个命令的帮助<br>docker-compose version                     #查看docker-compose版本信息</p>
-</li>
-<li><p>构建、卸载<br>docker-compose up -d C                     #构建启动某个容器<br>docker-compose down                        #停止并删除所有容器、网络、镜像等</p>
-</li>
-<li><p>启动、停止、重启、删除容器<br>docker-compose stop C<br>docker-compose start C<br>docker-compose restart C<br>docker-compose rm C                        #删除容器（删除前必须关闭容器，执行stop）</p>
-</li>
-<li><p>列出所有容器<br>docker-compose ps</p>
-</li>
-<li>进入到容器中<br>docker-compose exec C /bin/bash            #登录到容器中</li>
-<li><p>查看容器的实时日志<br>docker-compose logs  -f  C                  #查看容器的实时日志<br>docker-compose logs –tail 10 -f C          #查看容器的实时日志(从最后10行开始)</p>
-</li>
-<li><p>列出所有镜像<br>docker-compse images</p>
-</li>
-<li><p>检查并查看配置信息<br>docker-compose config                       #配置错误时，会输出错误信息</p>
-</li>
-<li><p>查看各个容器内运行的进程<br>docker-compose top</p>
-</li>
-<li><p>其它<br>docker-compose build C                       #构建镜像<br>docker-compose build –no-cache C            #不带缓存的构建<br>docker-compose events –json C               #以json形式输出容器的日志<br>docker-compose pause C                       #暂停容器<br>docker-compose unpause C                     #恢复容器</p>
-</li>
-</ul>
-<h2 id="docker-mechine的使用"><a href="#docker-mechine的使用" class="headerlink" title="docker-mechine的使用"></a>docker-mechine的使用</h2><p>docker-mechine的安装：base=<a href="https://github.com/docker/machine/releases/download/v0.16.0" target="_blank" rel="noopener">https://github.com/docker/machine/releases/download/v0.16.0</a> &amp;&amp;<br>  curl -L $base/docker-machine-$(uname -s)-$(uname -m) &gt;/tmp/docker-machine &amp;&amp;<br>  mv /tmp/docker-machine /usr/local/bin/docker-machine &amp;&amp;<br>  chmod +x /usr/local/bin/docker-machine</p>
-<p>docker-mechine:创建docker版的虚拟机（创建一个虚拟的 Docker 主机）</p>
-<ul>
-<li>docker-machine config</li>
-<li>docker-machine env</li>
-<li>docker-machine inspect</li>
-<li>docker-machine ip        #这个命令也能让你知道你当前管理的主机IP</li>
-<li>docker-machine kill</li>
-<li>docker-machine provision</li>
-<li>docker-machine regenerate-certs</li>
-<li>docker-machine restart</li>
-<li>docker-machine ssh        #远程ssh连接到docker虚拟机上</li>
-<li>docker-machine start</li>
-<li>docker-machine status</li>
-<li>docker-machine stop        #暂停docker虚拟机</li>
-<li>docker-machine upgrade</li>
-<li>docker-machine url</li>
-</ul>
-<h2 id="docker容器实现安全的机制"><a href="#docker容器实现安全的机制" class="headerlink" title="docker容器实现安全的机制"></a>docker容器实现安全的机制</h2><ul>
-<li>独立的命名空间和控制组集合，命名空间提供了最基础也是最直接的隔离，在容器中运行的进程不会被运行在主机上的进程和其它容器发现和作用。</li>
-<li>服务端防护， Linux 命名空间机制可以实现使用非 root 用户来运行，确保可信用户才能访问共享文件夹；REST API更新；</li>
-<li>内核能力机制  Linux 内核一个强大的特性，可以提供细粒度的权限访问控制</li>
-<li>其它安全策略等等</li>
-</ul>
-<h2 id="底层实现"><a href="#底层实现" class="headerlink" title="底层实现"></a>底层实现</h2><ul>
-<li>基本架构</li>
-<li>命名空间</li>
-<li>控制组</li>
-<li>联合文件系统</li>
-<li>网络</li>
-<li>容器格式<br>最初，Docker 采用了 LXC 中的容器格式。从 0.7 版本以后开始去除 LXC，转而使用自行开发的 libcontainer，从 1.11 开始，则进一步演进为使用 runC 和 containerd。</li>
-</ul>
-]]></content>
+      
+      
+        <tags>
+            
+            <tag> golang </tag>
+            
+        </tags>
+      
+    </entry>
+    
+    
+    
+    <entry>
+      <title>Go语言的协程调度原理和GMP设计</title>
+      <link href="/2021/12/18/Go%E8%AF%AD%E8%A8%80GMP%E6%A8%A1%E5%9E%8B/"/>
+      <url>/2021/12/18/Go%E8%AF%AD%E8%A8%80GMP%E6%A8%A1%E5%9E%8B/</url>
+      
+        <content type="html"><![CDATA[<h2 id="单线程时代"><a href="#单线程时代" class="headerlink" title="单线程时代"></a>单线程时代</h2><p>单进程时代不需要调度器，一切串行（存在阻塞问题）</p><h2 id="多进程、线程时代"><a href="#多进程、线程时代" class="headerlink" title="多进程、线程时代"></a>多进程、线程时代</h2><p>多进程时代、线程时代有了调度器（解决了阻塞，进程拥有太多的资源，进程的创建、切换、销毁，都会占用很长的时间，CPU虽然利用起来了，但如果进程过多，CPU有很大的一部分都被用来进行进程调度了。）   设计线程、解决锁、竞争冲突  —–》CPU的利用率低，需要提高CPU的利用率</p><p>多进程、多线程已经提高了系统的并发能力，但是在当今互联网高并发场景下，为每个任务都创建一个线程是不现实的，因为会消耗大量的内存(进程虚拟内存会占用4GB[32位操作系统], 而线程也要大约4MB)。</p><ul><li>大量的进程/线程出现了新的问题</li><li>高内存占用</li><li>调度的高消耗CPU</li></ul><h3 id="协程来提高CPU利用率"><a href="#协程来提高CPU利用率" class="headerlink" title="协程来提高CPU利用率"></a>协程来提高CPU利用率</h3><p>为了解决高内存占用、调度的高消耗CPU的问题，发现一个线程分为“内核态“线程和”用户态“线程。内核线程依然叫“线程(thread)”，用户线程叫“协程(co-routine)”.CPU只可见内核态的线程。<br>既然一个协程(co-routine)可以绑定一个线程(thread)，那么能不能多个协程(co-routine)绑定一个或者多个线程(thread)上呢。答案是可以的。于是协程和线程间的映射关系为N:1。</p><p>N:1的关系有的优缺点：<br>    优点就是协程在用户态线程即完成切换，不会陷入到内核态，这种切换非常的轻量快速。但也有很大的缺点，1个进程的所有协程都绑定在1个线程上：<br>        某个程序用不了硬件的多核加速能力<br>        一旦某协程阻塞，造成线程阻塞，本进程的其他协程都无法执行了，根本就没有并发的能力了。<br>1：1的关系优缺点：<br>    优点：1个协程绑定1个线程，这种最容易实现。协程的调度都由CPU完成了，不存在N:1缺点：协程的创建、删除和切换的代价都由CPU完成，有点略显昂贵了。</p><p>M:N的关系优缺点：<br>    M个协程绑定1个线程，是N:1和1:1类型的结合，克服了以上2种模型的缺点，但实现起来最为复杂。<br>     协程跟线程是有区别的，线程由CPU调度是抢占式的，协程由用户态调度是协作式的，一个协程让出CPU后，才执行下一个协程。</p><h2 id="Go语言的协程goroutine"><a href="#Go语言的协程goroutine" class="headerlink" title="Go语言的协程goroutine"></a>Go语言的协程goroutine</h2><p>Go为了提供更容易使用的并发方法，使用了goroutine和channel。goroutine来自协程的概念，让一组可复用的函数运行在一组线程之上，即使有协程阻塞，该线程的其他协程也可以被runtime调度，转移到其他可运行的线程上。最关键的是，程序员看不到这些底层的细节，这就降低了编程的难度，提供了更容易的并发。<br>Go中，协程被称为goroutine，它非常轻量，一个goroutine只占几KB，并且这几KB就足够goroutine运行完，这就能在有限的内存空间内支持大量goroutine，支持了更多的并发。虽然一个goroutine的栈只占几KB，但实际是可伸缩的，如果需要更多内容，runtime会自动为goroutine分配。<br>Goroutine特点：</p><ul><li>占用内存更小（几kb）</li><li>调度更灵活(runtime调度)</li></ul><h2 id="被废弃的goroutine调度器"><a href="#被废弃的goroutine调度器" class="headerlink" title="被废弃的goroutine调度器"></a>被废弃的goroutine调度器</h2><p>Go目前使用的调度器是2012年重新设计的，因为之前的调度器性能存在问题，所以使用4年就被废弃了，那么我们先来分析一下被废弃的调度器是如何运作的？</p><p>M想要执行、放回G都必须访问全局G队列，并且M有多个，即多线程访问同一资源需要加锁进行保证互斥/同步，所以全局G队列是有互斥锁进行保护的。<br><img src="/images/golang/goroutine/14-old.png" alt="avatar"><br>老调度器有几个缺点：</p><ul><li>创建、销毁、调度G都需要每个M获取锁，这就形成了激烈的锁竞争。</li><li>M转移G会造成延迟和额外的系统负载。比如当G中包含创建新协程的时候，M创建了G’，为了继续执行G，需要把G’交给M’执行，也造成了很差的局部性，因为G’和G是相关的，最好放在M上执行，而不是其他M’。</li><li>系统调用(CPU在M之间的切换)导致频繁的线程阻塞和取消阻塞操作增加了系统开销。</li></ul><h2 id="Goroutine调度器的GMP模型的设计思想"><a href="#Goroutine调度器的GMP模型的设计思想" class="headerlink" title="Goroutine调度器的GMP模型的设计思想"></a>Goroutine调度器的GMP模型的设计思想</h2><h3 id="1-GMP-模型"><a href="#1-GMP-模型" class="headerlink" title="(1) GMP 模型"></a>(1) GMP 模型</h3><ul><li>G-&gt;Goroutine</li><li>M-&gt;Thread线程</li><li>P-&gt;Processor</li></ul><p>线程是运行goroutine的实体，调度器的功能是把可运行的goroutine分配到工作线程上。<br><img src="/images/golang/goroutine/16-gmp.jpg" alt="avatar"></p><ul><li>全局队列（Global Queue）：存放等待运行的G。</li><li>P的本地队列：同全局队列类似，存放的也是等待运行的G，存的数量有限，不超过256个。新建G’时，G’优先加入到P的本地队列，如果队列满了，则会把本地队列中一半的G移动到全局队列。</li><li>P列表：所有的P都在程序启动时创建，并保存在数组中，最多有GOMAXPROCS(可配置)个。</li><li>M：线程想运行任务就得获取P，从P的本地队列获取G，P队列为空时，M也会尝试从全局队列拿一批G放到P的本地队列，或从其他P的本地队列偷一半放到自己P的本地队列。M运行G，G执行之后，M会从P获取下一个G，不断重复下去。</li></ul><p>Goroutine调度器和OS调度器是通过M结合起来的，每个M都代表了1个内核线程，OS调度器负责把内核线程分配到CPU的核上执行。</p><p><strong>有关P和M的个数问题</strong></p><p>1、P的数量：</p><p>由启动时环境变量$GOMAXPROCS或者是由runtime的方法GOMAXPROCS()决定。这意味着在程序执行的任意时刻都只有$GOMAXPROCS个goroutine在同时运行。</p><p>2、M的数量:</p><p>go语言本身的限制：go程序启动时，会设置M的最大数量，默认10000.但是内核很难支持这么多的线程数，所以这个限制可以忽略。<br>runtime/debug中的SetMaxThreads函数，设置M的最大数量<br>一个M阻塞了，会创建新的M。<br>M与P的数量没有绝对关系，一个M阻塞，P就会去创建或者切换另一个M，所以，即使P的默认数量是1，也有可能会创建很多个M出来。</p><p><strong>P和M何时会被创建</strong></p><p>1、P何时创建：在确定了P的最大数量n后，运行时系统会根据这个数量创建n个P。</p><p>2、M何时创建：没有足够的M来关联P并运行其中的可运行的G。比如所有的M此时都阻塞住了，而P中还有很多就绪任务，就会去寻找空闲的M，而没有空闲的，就会去创建新的M。</p><h2 id="2-调度器的设计策略"><a href="#2-调度器的设计策略" class="headerlink" title="(2)调度器的设计策略"></a>(2)调度器的设计策略</h2><h3 id="复用线程：避免频繁的创建、销毁线程，而是对线程的复用。"><a href="#复用线程：避免频繁的创建、销毁线程，而是对线程的复用。" class="headerlink" title="复用线程：避免频繁的创建、销毁线程，而是对线程的复用。"></a>复用线程：避免频繁的创建、销毁线程，而是对线程的复用。</h3><ul><li><p>1）work stealing机制</p><pre><code>当本线程无可运行的G时，尝试从其他线程绑定的P偷取G，而不是销毁线程。</code></pre></li><li><p>2）hand off机制</p><pre><code>当本线程因为G进行系统调用阻塞时，线程释放绑定的P，把P转移给其他空闲的线程执行。</code></pre></li></ul><h3 id="利用并行："><a href="#利用并行：" class="headerlink" title="利用并行："></a>利用并行：</h3><pre><code>GOMAXPROCS设置P的数量，最多有GOMAXPROCS个线程分布在多个CPU上同时运行。GOMAXPROCS也限制了并发的程度，比如GOMAXPROCS = 核数/2，则最多利用了一半的CPU核进行并行。</code></pre><h3 id="抢占："><a href="#抢占：" class="headerlink" title="抢占："></a>抢占：</h3><pre><code>在coroutine中要等待一个协程主动让出CPU才执行下一个协程，在Go中，一个goroutine最多占用CPU 10ms，防止其他goroutine被饿死，这就是goroutine不同于coroutine的一个地方。</code></pre><h3 id="全局G队列："><a href="#全局G队列：" class="headerlink" title="全局G队列："></a>全局G队列：</h3><pre><code>在新的调度器中依然有全局G队列，但功能已经被弱化了，当M执行work stealing从其他P偷不到G时，它可以从全局G队列获取G。</code></pre><h2 id="3-go-func-调度流程"><a href="#3-go-func-调度流程" class="headerlink" title="(3) go func() 调度流程"></a>(3) go func() 调度流程</h2><p><img src="/images/golang/goroutine/18-go-func.jpeg" alt="avatar"></p><p>从上图我们可以分析出几个结论：</p><p>​  *  1、我们通过 go func()来创建一个goroutine；</p><ul><li>​ 2、有两个存储G的队列，一个是局部调度器P的本地队列、一个是全局G队列。新创建的G会先保存在P的本地队列中，如果P的本地队列已经满了就会保存在全局的队列中；</li><li>​ 3、G只能运行在M中，一个M必须持有一个P，M与P是1：1的关系。M会从P的本地队列弹出一个可执行状态的G来执行，如果P的本地队列为空，就会想其他的MP组合偷取一个可执行的G来执行；</li><li>​ 4、一个M调度G执行的过程是一个循环机制；</li><li>​ 5、当M执行某一个G时候如果发生了syscall或则其余阻塞操作，M会阻塞，如果当前有一些G在执行，runtime会把这个线程M从P中摘除(detach)，然后再创建一个新的操作系统的线程(如果有空闲的线程可用就复用空闲线程)来服务于这个P；</li><li>​ 6、当M系统调用结束时候，这个G会尝试获取一个空闲的P执行，并放入到这个P的本地队列。如果获取不到P，那么这个线程M变成休眠状态， 加入到空闲线程中，然后这个G会被放入全局队列中。</li></ul><h2 id="4-调度器的生命周期"><a href="#4-调度器的生命周期" class="headerlink" title="(4)调度器的生命周期"></a>(4)调度器的生命周期</h2><p><img src="/images/golang/goroutine/17-pic-go.png" alt="avatar"></p><h3 id="M0"><a href="#M0" class="headerlink" title="M0"></a>M0</h3><p>M0是启动程序后的编号为0的主线程，这个M对应的实例会在全局变量runtime.m0中，不需要在heap上分配，M0负责执行初始化操作和启动第一个G， 在之后M0就和其他的M一样了。</p><h3 id="G0"><a href="#G0" class="headerlink" title="G0"></a>G0</h3><p>G0是每次启动一个M都会第一个创建的gourtine，G0仅用于负责调度的G，G0不指向任何可执行的函数, 每个M都会有一个自己的G0。在调度或系统调用时会使用G0的栈空间, 全局变量的G0是M0的G0。</p><p>我们来跟踪一段代码</p><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">package main</span><br><span class="line">import &quot;fmt&quot;</span><br><span class="line">func main() &#123;</span><br><span class="line">    fmt.Println(&quot;Hello world&quot;)</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure><p>经历如上图所示的过程：</p><ul><li>runtime创建最初的线程m0和goroutine g0，并把2者关联。</li><li>调度器初始化：初始化m0、栈、垃圾回收，以及创建和初始化由GOMAXPROCS个P构成的P列表。</li><li>示例代码中的main函数是main.main，runtime中也有1个main函数——runtime.main，代码经过编译后，runtime.main会调用main.main，程序启动时会为runtime.main创建goroutine，称它为main goroutine吧，然后把main goroutine加入到P的本地队列。</li><li>启动m0，m0已经绑定了P，会从P的本地队列获取G，获取到main goroutine。</li><li>G拥有栈，M根据G中的栈信息和调度信息设置运行环境</li><li>M运行G</li><li>G退出，再次回到M获取可运行的G，这样重复下去，直到main.main退出，runtime.main执行Defer和Panic处理，或调用runtime.exit退出程序。</li></ul><p>调度器的生命周期几乎占满了一个Go程序的一生，runtime.main的goroutine执行之前都是为调度器做准备工作，runtime.main的goroutine运行，才是调度器的真正开始，直到runtime.main结束而结束。</p><h2 id="5-可视化GMP编程"><a href="#5-可视化GMP编程" class="headerlink" title="(5)可视化GMP编程"></a>(5)可视化GMP编程</h2><h3 id="方式1：go-tool-trace"><a href="#方式1：go-tool-trace" class="headerlink" title="方式1：go tool trace"></a>方式1：go tool trace</h3><p>trace记录了运行时的信息，能提供可视化的Web页面。</p><h3 id="方式2：Debug-trace"><a href="#方式2：Debug-trace" class="headerlink" title="方式2：Debug trace"></a>方式2：Debug trace</h3><p><a href="https://www.topgoer.cn/docs/golangxiuyang/golangxiuyang-1cmeduvk27bo0" target="_blank" rel="noopener">Go的协程调度原理和GMP设计？</a></p>]]></content>
+      
+      
       <categories>
-        <category>container</category>
+          
+          <category> languages </category>
+          
       </categories>
-      <tags>
-        <tag>docker</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>工作简历</title>
-    <url>/1994/01/17/introduce/</url>
-    <content><![CDATA[<p><img src="/images/woman.jpeg" alt="introduce"></p>
-<h1 id="基本情况"><a href="#基本情况" class="headerlink" title="基本情况"></a>基本情况</h1><p> Tina ｜ 女 ｜ 汉族 ｜ 未婚 ｜ 1994年1月17日出生 ｜ 山西人 ｜ 本科学历 </p>
-<h1 id="教育情况"><a href="#教育情况" class="headerlink" title="教育情况"></a>教育情况</h1><p>2013/09 ~ 2017/07 | 山西农业大学 ｜ 信息与计算科学 ｜ 本科</p>
-<h1 id="技能情况"><a href="#技能情况" class="headerlink" title="技能情况"></a>技能情况</h1><ul>
-<li>掌握多种开发语言, 熟悉java，golang，了解Solidity ；</li>
-<li>熟悉云计算开发流程，熟悉OpenStack及其原理；</li>
-<li>掌握区块链以太坊Truffle/Plasma以及Hyperledger 生态 ；</li>
-<li>熟悉容器技术docker，及其原理;</li>
-<li>熟悉中间件Redis/Kafka/Zookeeper/Etcd/Mysql的使用及其原理；</li>
-</ul>
-<p>Detail: <a href="https://tingtingtian.github.io" target="_blank" rel="noopener">https://tingtingtian.github.io</a></p>
-<h1 id="联系方式"><a href="#联系方式" class="headerlink" title="联系方式"></a>联系方式</h1><p>Email: <a href="mailto:2565086122@qq.com" target="_blank" rel="noopener">2565086122@qq.com</a><br>电话:  18404969483</p>
-<h1 id="工作项目经历"><a href="#工作项目经历" class="headerlink" title="工作项目经历"></a>工作项目经历</h1><h2 id="2020-12-–-Now"><a href="#2020-12-–-Now" class="headerlink" title="2020/12 – Now"></a>2020/12 – Now</h2><h3 id="建信金科"><a href="#建信金科" class="headerlink" title="建信金科"></a>建信金科</h3><p><strong> 职位 </strong> : 云计算开发工程师<br><strong> 工作描述 </strong></p>
-<ul>
-<li>负责TCE代码编译及分析；</li>
-<li>负责MultiCloud平台相关Provider开发；</li>
-<li>负责OpenStack二次开发；</li>
-</ul>
-<h2 id="2020-06-–-2020-12"><a href="#2020-06-–-2020-12" class="headerlink" title="2020/06 – 2020/12"></a>2020/06 – 2020/12</h2><h3 id="北京网众共创科技有限公司"><a href="#北京网众共创科技有限公司" class="headerlink" title="北京网众共创科技有限公司"></a>北京网众共创科技有限公司</h3><p><strong> 职位 </strong> : 云平台开发工程师<br><strong> 工作描述 </strong></p>
-<ul>
-<li>负责HCCloud的概要设计、原型设计；</li>
-<li>负责HCCloud的前后端研发、测试、上线；</li>
-</ul>
-<h2 id="2019-07-–-2020-06"><a href="#2019-07-–-2020-06" class="headerlink" title="2019/07 – 2020/06"></a>2019/07 – 2020/06</h2><h3 id="北京航天紫光科技有限公司"><a href="#北京航天紫光科技有限公司" class="headerlink" title="北京航天紫光科技有限公司"></a>北京航天紫光科技有限公司</h3><p><strong> 职位 </strong> : 云平台开发工程师<br><strong> 工作描述 </strong></p>
-<ul>
-<li>负责OpenStack组件二次开发封装，使其符合私有云的标准；</li>
-<li>负责Glance、Flavor组件分页优化以及Glance镜像上传优化；</li>
-<li>配合项目经理工作，完成相关概要设计、详细设计；</li>
-</ul>
-<h2 id="2017-09-–-2019-06"><a href="#2017-09-–-2019-06" class="headerlink" title="2017/09 – 2019/06"></a>2017/09 – 2019/06</h2><h3 id="中电太极集团"><a href="#中电太极集团" class="headerlink" title="中电太极集团"></a>中电太极集团</h3><p><strong> 职位 </strong> : java开发工程师<br><strong> 工作描述 </strong></p>
-<ul>
-<li>配合项目经理的工作，按照项目计划，按时提交高质量代码，完成开发任务；</li>
-<li>参与讨论解决项目中遇到的问题，解决问题；</li>
-<li>规范文档的编写、维护，以及其他与项目相关工作。</li>
-</ul>
-<h3 id="项目"><a href="#项目" class="headerlink" title="项目"></a>项目</h3><h2 id="2020-12-–-Now-1"><a href="#2020-12-–-Now-1" class="headerlink" title="2020/12 – Now"></a>2020/12 – Now</h2><h3 id="建信金科-1"><a href="#建信金科-1" class="headerlink" title="建信金科"></a>建信金科</h3><p><strong> 职位 </strong> : 云计算开发工程师</p>
-<h4 id="金融云"><a href="#金融云" class="headerlink" title="金融云"></a>金融云</h4><p><strong> 开发环境 </strong> : windows+goland+go15.6<br><strong> 软件架构 </strong> : grpc<br><strong> 项目周期 </strong> : 2020.12～2021.10<br><strong> 项目介绍 </strong> :<br>金融云是基于IaaS层，打造的为银行内部提供一体化云服务，多云产品集成、跨数据中心管理的企业级综合平台，平台应用开源云平台架构，基于KVM\VMWare虚拟化技术，保障了云平台的高可用性。后期加入了对TCE云的支持。云管理平台提供了包括宿主机管理、虚拟机管理、网络管理、存储管理、模版管理、快照管理等资源管理功能。整合多个平台的优质资源，实现多云管理。<br><strong> 责任描述 </strong> :<br>1、主要负责项目中镜像、租户、配额等模块的设计、开发和重构；<br>2、vmware golang sdk 的设计、编写和维护；<br>3、项目中相关模块文档完善。</p>
-<h2 id="2019-07-–-2020-06-1"><a href="#2019-07-–-2020-06-1" class="headerlink" title="2019/07 – 2020/06"></a>2019/07 – 2020/06</h2><h3 id="北京航天紫光科技有限公司-1"><a href="#北京航天紫光科技有限公司-1" class="headerlink" title="北京航天紫光科技有限公司"></a>北京航天紫光科技有限公司</h3><p><strong> 职位 </strong> : 云平台开发工程师</p>
-<h4 id="CloudOS"><a href="#CloudOS" class="headerlink" title="CloudOS"></a>CloudOS</h4><p><strong> 开发环境 </strong> : windows+idea+jdk1.8<br><strong> 软件架构 </strong> : springBoot+ MyBatis+ MySql+Redis+RabbitMQ+Iview<br><strong> 项目介绍 </strong> ：<br>项目背景：伴随信息化技术的飞跃发展，传统数据中心管理中存在资源瓶颈、信息孤岛、标准不一、系统复杂、服务水平低下等诸多矛盾被愈发激化，IT 的整体管控模式急需向云化模式转型。因此，越来越多的企业和组织正在着力于传统 IT 向云化 IT 转变，并通过云计算技术和服务来实现 IT 的统一运营，提升运营效益。而在业务发展和数字化转型的过程中，越来越多的组织也期望 IT 部门能够敏捷应对持续演变的业务需求，并通过智能应用分析海量的数据，以提高企业的数字化和智能化。<br>项目主要业务：CloudOS云管理系统从业务上来说包括三层业务层、平台层和基础层。业务层主要是由虚拟化平台，云管理平台和运维平台三部分构成；平台层由虚拟化VIM，OpenStack，prometheus三部分构成；基础层由虚拟化VIK,KVM,agent组成的虚拟化与监控和由k8s，centos，docker组成的业务承载支撑。其中业务层的菜单整合，应用整合，权限整合，消息总线等都是由公共服务完成的。工作中所负责的主要是业务层中的云管理平台。云管理平台主要负责对计算，网络，存储等资源进行配置和调度，包括计算，网络，配置三个大模块。计算中包含主机，裸金属，镜像，硬盘，密钥对等功能模块；网络中包含私有网络，虚拟网卡，安全组，路由器等功能模块；配置中包含计算节点，裸金属节点，资源规格，存储类型等功能模块。<br><strong> 责任描述 </strong> :<br>1、主要负责项目中镜像、存储类型、资源规格模块的需求设计，概要设计，详细设计以及代码的开发以及后期BUG的修改；完成资源规格以及存储类型的前端代码，参与镜像前端代码的开发。<br>2、参与项目中重要问题讨论，其中重要的是租户/用户与OpenStack对接解决方案，镜像上传文件速度慢解决方案。</p>
-<h2 id="2017-09-–-2019-06-1"><a href="#2017-09-–-2019-06-1" class="headerlink" title="2017/09 – 2019/06"></a>2017/09 – 2019/06</h2><h3 id="中电太极集团-1"><a href="#中电太极集团-1" class="headerlink" title="中电太极集团"></a>中电太极集团</h3><p><strong> 职位 </strong> : java开发工程师</p>
-<h4 id="公文传办"><a href="#公文传办" class="headerlink" title="公文传办"></a>公文传办</h4><p><strong> 开发环境 </strong> : windows+eclipse neon+jdk1.8+tomcat7<br><strong> 软件架构 </strong> : Spring + Hibernate + Struts2 +达梦+easyui+poi<br><strong> 开发周期 </strong> : 2018.12~2019.01<br><strong> 项目介绍 </strong> :<br>随着业务的不断发展，客户人员对于文件的处理越来越复杂，错误常常发生，核对量巨大。为了解决这些问题，业务更好更快地发展，我们开发了该系统。该系统主要是对文件进行处理，包括文件登记、文件发送、文件接收、文件传阅、文件回退、文件销毁等等，其间涉及到文件发送的预案设置、文件传阅的传阅机制设置，文件的跨域传递或者域内传递问题；在系统中，同时对各阶段的文件进行统计分析、展示，通过echart中的柱状图，饼状图、折线图等等直观显示了文件的情况，实现了对多阶段文件的综合展示，便于用户对文件大体情况的直观了解。系统上线后，解决了客户的实际问题，促进了公司的发展，得到公司认可和赞誉。<br><strong> 责任描述 </strong> :<br>1、参与项目的讨论；<br>2、按照项目计划，完成任务，提交代码；<br>3、主要负责文件登记、文件发送、预案管理模块儿；<br>4、书写相关项目文档。</p>
-<h4 id="数据融合工程"><a href="#数据融合工程" class="headerlink" title="数据融合工程"></a>数据融合工程</h4><p><strong> 开发环境 </strong> : windows+eclipse neon+jdk1.8+tomcat7<br><strong> 软件架构 </strong> : Spring + Mybatis +SpringMvc +DM+Echart+Kafka+Kettle<br><strong> 开发周期 </strong> : 2018.8~2018.10<br><strong> 项目介绍 </strong> :<br>该系统为了实现多数据应用系统数据的融合，得到更有价值的数据，而发起的。该系统分为数据服务层、数据处理层、数据采集层三个主要部分。数据采集层主要利用kettle进行数据抽取，通过数据采集服务器分主题存入主题数据中，并且通过kafka进行主题注册，以topic进行消息管理，发布到某个topic的消息通过策略分布到partition（消息队列），订阅者选择一个topic，会被分配到partition的一个id开始进行消费；数据处理层主要是主题数据建模，建模过程如上所说；数据服务层是一个有SpringMVC+Spring+Mybatis框架实现的数据服务平台，根据需求到Kafka订阅消息，并将获取的消息进行整合处理发送给使用者，并且用echart提供数据可视化展示。<br><strong> 责任描述 </strong> :<br>全程参与项目的设计，开发，测试以及维护，主要负责用ETL工具进行数据采集，并将采集的数据分主题存入主题数据库，负责获取订阅后的信息，并且用echart展示。</p>
-<h4 id="标签生成系统"><a href="#标签生成系统" class="headerlink" title="标签生成系统"></a>标签生成系统</h4><p><strong> 开发环境 </strong> : windows+eclipse neon+jdk1.8+tomcat7<br><strong> 软件架构 </strong> : Spring + Mybatis +SpringMvc +MySql<br><strong> 开发周期 </strong> : 2018.6~2018.8<br><strong> 项目介绍 </strong> :<br>该系统为了方便库存装备的盘点、出库、入库，需要对设备标记，实现标签化管理。该系统主要用来制作、修改、查询、标记、重置标签，对多种标签写入的不同数据进行管理，维护。涉及到单个标签，外包装箱标签、包装箱标签等多种不同标签的制作、批量制作、读取、批量读取；在制作完成后涉及到与手持机和应用系统间的数据信息交互。<br><strong> 责任描述 </strong> :<br>全程参与项目的设计，开发，测试以及维护，主要负责单个标签，外包装箱标签、包装箱标签的制作、批量制作、读取、标定以及数据库的远程切换。</p>
-]]></content>
-  </entry>
-  <entry>
-    <title>interface 基础特性和使用</title>
-    <url>/2021/12/20/interface%E6%8E%A5%E5%8F%A3%E7%9A%84%E4%BD%BF%E7%94%A8%E5%92%8C%E8%AE%BE%E8%AE%A1/</url>
-    <content><![CDATA[<p>interface 是GO语言的基础特性之一。可以理解为一种类型的规范或者约定。它跟java，C# 不太一样，不需要显示说明实现了某个接口，它没有继承或子类或“implements”关键字，只是通过约定的形式，隐式的实现interface 中的方法即可。因此，Golang 中的 interface 让编码<strong>更灵活、易扩展。</strong></p>
-<p>如何理解go 语言中的interface ？ 只需记住以下三点即可：</p>
-<ul>
-<li>interface 是方法声明的集合</li>
-<li>任何类型的对象实现了在interface 接口中声明的全部方法，则表明该类型实现了该接口。</li>
-<li>interface 可以作为一种数据类型，实现了该接口的任何对象都可以给对应的接口类型变量赋值。</li>
-</ul>
-<p><strong>注意：</strong></p>
-<ul>
-<li>a. interface 可以被任意对象实现，一个类型/对象也可以实现多个 interface</li>
-<li>b. 方法不能重载，如 eat(), eat(s string) 不能同时存在</li>
-</ul>
-<p><strong>开闭原则</strong></p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">package domain</span><br><span class="line"></span><br><span class="line">/**</span><br><span class="line">该设计符合开闭原则</span><br><span class="line">**/</span><br><span class="line"></span><br><span class="line">//普通书</span><br><span class="line">type OriBook struct &#123;</span><br><span class="line">	Id   string</span><br><span class="line">	Name string</span><br><span class="line">	Type string</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">//高级书</span><br><span class="line">type HighBook struct &#123;</span><br><span class="line">	Id     string</span><br><span class="line">	Name   string</span><br><span class="line">	Type   string</span><br><span class="line">	Author string</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">//操作</span><br><span class="line">type BookDao interface &#123;</span><br><span class="line">	GetBook()</span><br><span class="line">	AddBook()</span><br><span class="line">	EditBook()</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">type OriBookDaoImp struct &#123;</span><br><span class="line">	oriBook OriBook</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func (o *OriBookDaoImp) GetBook() &#123;</span><br><span class="line"></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">type HighBookDaoImpl struct &#123;</span><br><span class="line">	highBook HighBook</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func (o *HighBookDaoImpl) GetBook() &#123;</span><br><span class="line"></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func GetBookDao(book *BookDao) &#123;</span><br><span class="line">	book.GetBook()</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func AddBookDao(book *BookDao) &#123;</span><br><span class="line">	book.AddBook()</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func EditBookDao(book *BookDao) &#123;</span><br><span class="line">	book.EditBook()</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-<p><strong>依赖倒转</strong></p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">/*</span><br><span class="line">   符合依赖倒转原则</span><br><span class="line"></span><br><span class="line">   模拟组装2台电脑</span><br><span class="line">   --- 抽象层 ---</span><br><span class="line">   有显卡Card  方法display</span><br><span class="line">   有内存Memory 方法storage</span><br><span class="line">   有处理器CPU   方法calculate</span><br><span class="line"></span><br><span class="line">   --- 实现层层 ---</span><br><span class="line">   有 Intel因特尔公司 、产品有(显卡、内存、CPU)</span><br><span class="line">   有 Kingston 公司， 产品有(内存3)</span><br><span class="line">   有 NVIDIA 公司， 产品有(显卡)</span><br><span class="line"></span><br><span class="line">   --- 逻辑层 ---</span><br><span class="line">   1. 组装一台Intel系列的电脑，并运行</span><br><span class="line">   2. 组装一台 Intel CPU  Kingston内存 NVIDIA显卡的电脑，并运行</span><br><span class="line">*/</span><br><span class="line">package main</span><br><span class="line"></span><br><span class="line">import &quot;fmt&quot;</span><br><span class="line"></span><br><span class="line">//------  抽象层 -----</span><br><span class="line">type Card interface &#123;</span><br><span class="line">	Display()</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">type Memory interface &#123;</span><br><span class="line">	Storage()</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">type CPU interface &#123;</span><br><span class="line">	Calculate()</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">type Computer struct &#123;</span><br><span class="line">	cpu  CPU</span><br><span class="line">	mem  Memory</span><br><span class="line">	card Card</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func NewComputer(cpu CPU, mem Memory, card Card) *Computer &#123;</span><br><span class="line">	return &amp;Computer&#123;</span><br><span class="line">		cpu:  cpu,</span><br><span class="line">		mem:  mem,</span><br><span class="line">		card: card,</span><br><span class="line">	&#125;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func (this *Computer) DoWork() &#123;</span><br><span class="line">	this.cpu.Calculate()</span><br><span class="line">	this.mem.Storage()</span><br><span class="line">	this.card.Display()</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">//------  实现层 -----</span><br><span class="line">//intel</span><br><span class="line">type IntelCPU struct &#123;</span><br><span class="line">	CPU</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func (this *IntelCPU) Calculate() &#123;</span><br><span class="line">	fmt.Println(&quot;Intel CPU 开始计算了...&quot;)</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">type IntelMemory struct &#123;</span><br><span class="line">	Memory</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func (this *IntelMemory) Storage() &#123;</span><br><span class="line">	fmt.Println(&quot;Intel Memory 开始存储了...&quot;)</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">type IntelCard struct &#123;</span><br><span class="line">	Card</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func (this *IntelCard) Display() &#123;</span><br><span class="line">	fmt.Println(&quot;Intel Card 开始显示了...&quot;)</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">//kingston</span><br><span class="line">type KingstonMemory struct &#123;</span><br><span class="line">	Memory</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func (this *KingstonMemory) Storage() &#123;</span><br><span class="line">	fmt.Println(&quot;Kingston memory storage...&quot;)</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">//nvidia</span><br><span class="line">type NvidiaCard struct &#123;</span><br><span class="line">	Card</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func (this *NvidiaCard) Display() &#123;</span><br><span class="line">	fmt.Println(&quot;Nvidia card display...&quot;)</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">//------  业务逻辑层 -----</span><br><span class="line">func main() &#123;</span><br><span class="line">	//intel系列的电脑</span><br><span class="line">	com1 := NewComputer(&amp;IntelCPU&#123;&#125;, &amp;IntelMemory&#123;&#125;, &amp;IntelCard&#123;&#125;)</span><br><span class="line">	com1.DoWork()</span><br><span class="line"></span><br><span class="line">	//杂牌子</span><br><span class="line">	com2 := NewComputer(&amp;IntelCPU&#123;&#125;, &amp;KingstonMemory&#123;&#125;, &amp;NvidiaCard&#123;&#125;)</span><br><span class="line">	com2.DoWork()</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-]]></content>
+      
+      
+        <tags>
+            
+            <tag> golang </tag>
+            
+        </tags>
+      
+    </entry>
+    
+    
+    
+    <entry>
+      <title>Go中逃逸分析</title>
+      <link href="/2021/12/18/Go%E4%B8%AD%E9%80%83%E9%80%B8%E5%88%86%E6%9E%90/"/>
+      <url>/2021/12/18/Go%E4%B8%AD%E9%80%83%E9%80%B8%E5%88%86%E6%9E%90/</url>
+      
+        <content type="html"><![CDATA[<p>go语言编译器会自动决定把一个变量放在栈还是放在堆，编译器会做逃逸分析(escape analysis)，<strong>当发现变量的作用域没有跑出函数范围，就可以在栈上，反之则必须分配在堆</strong>。<br>go语言声称这样可以释放程序员关于内存的使用限制，更多的让程序员关注于程序功能逻辑本身。</p><p>Golang中一个函数内局部变量，不管是不是动态new出来的，它会被分配在堆还是栈，是由编译器做逃逸分析之后做出的决定。</p>]]></content>
+      
+      
       <categories>
-        <category>languages</category>
+          
+          <category> languages </category>
+          
       </categories>
-      <tags>
-        <tag>golang</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>区块链简述</title>
-    <url>/2021/12/10/%E5%8C%BA%E5%9D%97%E9%93%BE%E5%85%A5%E9%97%A8/</url>
-    <content><![CDATA[<h2 id="什么是区块链"><a href="#什么是区块链" class="headerlink" title="什么是区块链"></a>什么是区块链</h2><h3 id="概念"><a href="#概念" class="headerlink" title="概念"></a>概念</h3><pre><code>它是一种**特殊的分布式数据库**，主要作用是**储存信息**。任何需要保存的信息，都可以写入区块链，也可以从里面读取，所以它是数据库。
-
-其次，任何人都可以架设服务器，加入区块链网络，成为一个节点。区块链的世界里面，没有中心节点，每个节点都是平等的，都保存着整个数据库。你可以向任何一个节点，写入/读取数据，因 
-为所有节点最后都会同步，保证区块链一致。
-</code></pre><h3 id="特点-区块链没有管理员，它是彻底无中心的"><a href="#特点-区块链没有管理员，它是彻底无中心的" class="headerlink" title="特点  区块链没有管理员，它是彻底无中心的"></a>特点  区块链没有管理员，它是彻底无中心的</h3><ul>
-<li>区块链中的区块包含block、Nonce、coinbase、tx、pre、hash,而调整Nonce的值查找满足一定条件的hash,eg:hash的前6位数为0，的过程，就是挖矿的过程，挖矿不是本质，本质是为了达成共识（挖矿是一场数学游戏，f(序列化后的块的信息)&lt;target,即序列化后的block的信息的hash要小于目标值）</li>
-<li>如何保证交易的安全性呢？数字签名（私钥由24个字节的一组数据构成），对message,publickey,signature(由私钥加密形成的一串数据)三个字段进行组合验证，如何验证呢？椭圆曲线</li>
-<li>公钥是如何由私钥生成的呢？椭圆曲线(非对称加密)，不停地找椭圆的切线，切线和椭圆弧线相交点的对称点，形成三角形后与椭圆的交点的对称点继续。。。。。<br>-</li>
-</ul>
-<h2 id="什么是比特币"><a href="#什么是比特币" class="headerlink" title="什么是比特币"></a>什么是比特币</h2><ul>
-<li>非对称加密形成的凭证（公钥和私钥）</li>
-<li>原理：非对称加密保证了支付的可靠性</li>
-</ul>
-<h2 id="为什么用区块链"><a href="#为什么用区块链" class="headerlink" title="为什么用区块链"></a>为什么用区块链</h2><h3 id="可使用领域较多："><a href="#可使用领域较多：" class="headerlink" title="可使用领域较多："></a>可使用领域较多：</h3><ul>
-<li>证券  <ul>
-<li>股权交割</li>
-<li>衍生合约</li>
-<li>证券保险</li>
-</ul>
-</li>
-<li>零售银行<ul>
-<li>跨境汇款</li>
-<li>抵押品管理</li>
-<li>抵押合约执行</li>
-</ul>
-</li>
-<li>国际贸易<ul>
-<li>提货单</li>
-<li>跨境支付</li>
-</ul>
-</li>
-<li>公共档案<ul>
-<li>房产登记</li>
-<li>车辆登记</li>
-<li>产权登记</li>
-<li>营业执照登记</li>
-</ul>
-</li>
-<li>企业银行  <ul>
-<li>财团贷款</li>
-<li>银行间结算</li>
-</ul>
-</li>
-<li>微博微信（去中心化，任何人都删除不了） </li>
-<li>游戏（玩家控制）</li>
-</ul>
-<ul>
-<li>安全不可篡改</li>
-<li>去中心化</li>
-<li>可追溯（电商公司可实现）</li>
-</ul>
-<h3 id="区块链的局限性"><a href="#区块链的局限性" class="headerlink" title="区块链的局限性"></a>区块链的局限性</h3><ul>
-<li>不适合高频高性能的交易环境（如毫秒级交易响应时间）</li>
-<li>没约业务网络的小组织</li>
-<li>不是一个数据库替代方案</li>
-<li>不是一个消息传递替代方案</li>
-<li><p>不是一个交易处理系统替代方案</p>
-<p>如何保护隐私呢？加密算法，地址的不可确定性</p>
-</li>
-</ul>
-<h2 id="怎么使用区块链"><a href="#怎么使用区块链" class="headerlink" title="怎么使用区块链"></a>怎么使用区块链</h2><p>merkle（默克尔树）—-&gt; 一种数据结构，由不同数据块的哈希散列而成（用于生成区块中所有交易的概括（默克尔根））—-&gt; 需要实战去写一下  </p>
-<p>怎么实现呢？  merkle root 是由hash1和hash2，进行大小端的转换，之后拼接在一起，进行double sha256(双哈希)计算出来的数据</p>
-<p>账本是如何更新的呢？账本信息同步到其它节点（是否是本人发起的，比特币是否够用呢？）数字签名保证本人发起，用信息+公钥验证签名的有效性</p>
-<p>区块链可以追溯比特币的来源</p>
-<p>双花交易问题：添加prev的概念，增加时间的概念，形成事件链</p>
-<p>概念</p>
-<p>UTXO：未使用的交易输出<br>ECDSA：椭圆曲线数字签名算法<br>secp256k1椭圆曲线  —&gt; 需要公钥私钥的生成实战</p>
-]]></content>
+      
+      
+        <tags>
+            
+            <tag> golang </tag>
+            
+        </tags>
+      
+    </entry>
+    
+    
+    
+    <entry>
+      <title>make和new的区别</title>
+      <link href="/2021/12/18/make%E4%B8%8Enew%E7%9A%84%E5%8C%BA%E5%88%AB/"/>
+      <url>/2021/12/18/make%E4%B8%8Enew%E7%9A%84%E5%8C%BA%E5%88%AB/</url>
+      
+        <content type="html"><![CDATA[<h2 id="相同"><a href="#相同" class="headerlink" title="相同"></a>相同</h2><p>   堆空间分配</p><h2 id="不同"><a href="#不同" class="headerlink" title="不同"></a>不同</h2><p>make: 只用于slice、map以及channel的初始化， 无可替代<br>new: 用于类型内存分配(初始化值为0)， 不常用</p><p>new不常用<br>  所以有new这个内置函数，可以给我们分配一块内存让我们使用，但是现实的编码中，它是不常用的。我们通常都是采用短语句声明以及结构体的字面量达到我们的目的，比如：</p>  <figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">i : =0</span><br><span class="line">u := user&#123;&#125;</span><br></pre></td></tr></table></figure><p>make 无可替代<br>我们在使用slice、map以及channel的时候，还是要使用make进行初始化，然后才才可以对他们进行操作。</p>]]></content>
+      
+      
       <categories>
-        <category>blockchain</category>
+          
+          <category> languages </category>
+          
       </categories>
-      <tags>
-        <tag>blockchain</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>make和new的区别</title>
-    <url>/2021/12/18/make%E4%B8%8Enew%E7%9A%84%E5%8C%BA%E5%88%AB/</url>
-    <content><![CDATA[<h2 id="相同"><a href="#相同" class="headerlink" title="相同"></a>相同</h2><p>   堆空间分配</p>
-<h2 id="不同"><a href="#不同" class="headerlink" title="不同"></a>不同</h2><p>make: 只用于slice、map以及channel的初始化， 无可替代<br>new: 用于类型内存分配(初始化值为0)， 不常用</p>
-<p>new不常用<br>  所以有new这个内置函数，可以给我们分配一块内存让我们使用，但是现实的编码中，它是不常用的。我们通常都是采用短语句声明以及结构体的字面量达到我们的目的，比如：</p>
-  <figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">i : =0</span><br><span class="line">u := user&#123;&#125;</span><br></pre></td></tr></table></figure>
-<p>make 无可替代<br>我们在使用slice、map以及channel的时候，还是要使用make进行初始化，然后才才可以对他们进行操作。</p>
-]]></content>
+      
+      
+        <tags>
+            
+            <tag> golang </tag>
+            
+        </tags>
+      
+    </entry>
+    
+    
+    
+    <entry>
+      <title>defer执行顺序</title>
+      <link href="/2021/12/18/defer%E6%89%A7%E8%A1%8C%E9%A1%BA%E5%BA%8F/"/>
+      <url>/2021/12/18/defer%E6%89%A7%E8%A1%8C%E9%A1%BA%E5%BA%8F/</url>
+      
+        <content type="html"><![CDATA[<p><strong>知识点1：defer的执行顺序</strong></p><p>多个defer出现的时候，它是一个“栈”的关系，也就是先进后出。一个函数中，写在前面的defer会比写在后面的defer调用的晚。</p><p><strong>知识点2：defer和return的执行顺序</strong></p><p>return之后的语句先执行，defer后的语句后执行</p><p><strong>知识点3：函数的返回值初始化</strong></p><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br></pre></td><td class="code"><pre><span class="line">package main</span><br><span class="line"></span><br><span class="line">import &quot;fmt&quot;</span><br><span class="line"></span><br><span class="line">func DeferFunc1(i int) (t int) &#123;</span><br><span class="line"></span><br><span class="line">    fmt.Println(&quot;t = &quot;, t)</span><br><span class="line"></span><br><span class="line">    return 2</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func main() &#123;</span><br><span class="line">    DeferFunc11(10)</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line"></span><br><span class="line">结果</span><br><span class="line">t =  0</span><br></pre></td></tr></table></figure><p>只要声明函数的返回值变量名称，就会在函数初始化时候为之赋值为0，而且在函数体作用域可见。</p><p><strong>知识点4：有名函数返回值遇见defer情况</strong></p><p>先return，再defer，所以在执行完return之后，还要再执行defer里的语句，依然可以修改本应该返回的结果。</p><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line">package main</span><br><span class="line"></span><br><span class="line">import &quot;fmt&quot;</span><br><span class="line"></span><br><span class="line">func returnButDefer() (t int) &#123;  //t初始化0， 并且作用域为该函数全域</span><br><span class="line"></span><br><span class="line">    defer func() &#123;</span><br><span class="line">        t = t * 10</span><br><span class="line">    &#125;()</span><br><span class="line"></span><br><span class="line">    return 1</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func main() &#123;</span><br><span class="line">    fmt.Println(returnButDefer())</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">$ go run test.go</span><br><span class="line">10</span><br></pre></td></tr></table></figure><p><strong>知识点5：defer遇见panic</strong></p><p>到panic时，遍历本协程的defer链表，并执行defer。在执行defer过程中:遇到recover则停止panic，返回recover处继续往下执行。如果没有遇到recover，遍历完本协程的defer链表后，向stderr抛出panic信息。</p><p><img src="/images/golang/base/114-defer.jpeg" alt="avatar"></p><p><strong>知识点6: defer中包含panic</strong></p><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line">package main</span><br><span class="line"></span><br><span class="line">import (</span><br><span class="line">    &quot;fmt&quot;</span><br><span class="line">)</span><br><span class="line"></span><br><span class="line">func main()  &#123;</span><br><span class="line"></span><br><span class="line">    defer func() &#123;</span><br><span class="line">       if err := recover(); err != nil&#123;</span><br><span class="line">           fmt.Println(err)</span><br><span class="line">       &#125;else &#123;</span><br><span class="line">           fmt.Println(&quot;fatal&quot;)</span><br><span class="line">       &#125;</span><br><span class="line">    &#125;()</span><br><span class="line"></span><br><span class="line">    defer func() &#123;</span><br><span class="line">        panic(&quot;defer panic&quot;)</span><br><span class="line">    &#125;()</span><br><span class="line"></span><br><span class="line">    panic(&quot;panic&quot;)</span><br><span class="line">&#125;</span><br><span class="line">结果</span><br><span class="line"></span><br><span class="line">defer panic</span><br></pre></td></tr></table></figure><p><strong>知识点7：defer下的函数参数包含子函数</strong></p><figure class="highlight plain"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line">package main</span><br><span class="line"></span><br><span class="line">import &quot;fmt&quot;</span><br><span class="line"></span><br><span class="line">func function(index int, value int) int &#123;</span><br><span class="line"></span><br><span class="line">    fmt.Println(index)</span><br><span class="line"></span><br><span class="line">    return index</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">func main() &#123;</span><br><span class="line">    defer function(1, function(3, 0))</span><br><span class="line">    defer function(2, function(4, 0))</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure><p> 这里，有4个函数，他们的index序号分别为1，2，3，4。</p><p>那么这4个函数的先后执行顺序是什么呢？这里面有两个defer， 所以defer一共会压栈两次，先进栈1，后进栈2。 那么在压栈function1的时候，需要连同函数地址、函数形参一同进栈，那么为了得到function1的第二个参数的结果，所以就需要先执行function3将第二个参数算出，那么function3就被第一个执行。同理压栈function2，就需要执行function4算出function2第二个参数的值。然后函数结束，先出栈fuction2、再出栈function1.</p><p> 所以顺序如下：</p><p>defer压栈function1，压栈函数地址、形参1、形参2(调用function3) –&gt; 打印3<br>defer压栈function2，压栈函数地址、形参1、形参2(调用function4) –&gt; 打印4<br>defer出栈function2, 调用function2 –&gt; 打印2<br>defer出栈function1, 调用function1–&gt; 打印1<br>3<br>4<br>2<br>1</p><p><a href="https://www.topgoer.cn/docs/golangxiuyang/golangxiuyang-1cmee0q64ij5p" target="_blank" rel="noopener">参考链接</a></p>]]></content>
+      
+      
       <categories>
-        <category>languages</category>
+          
+          <category> languages </category>
+          
       </categories>
-      <tags>
-        <tag>golang</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title>k8s入门</title>
-    <url>/2021/12/22/k8%E5%85%A5%E9%97%A8/</url>
-    <content><![CDATA[<h2 id="k8s调度"><a href="#k8s调度" class="headerlink" title="k8s调度"></a>k8s调度</h2><p><img src="/images/golang/k8s/k8s_schedule.png" alt="avatar"></p>
-<ul>
-<li><p>kubectl向apiserver发送部署请求（例如使用 kubectl create -f deployment.yml）</p>
-</li>
-<li><p>apiserver将 Deployment 持久化到etcd；etcd与apiserver进行一次http通信。</p>
-</li>
-<li><p>controller manager通过watch api监听 apiserver ，deployment controller看到了一个新创建的deplayment对象更后，将其从队列中拉出，根据deployment的描述创建一个ReplicaSet并将 ReplicaSet 对象返回apiserver并持久化回etcd。 以此类推，当replicaset控制器看到新创建的replicaset对象，将其从队列中拉出，根据描述创建pod对象。</p>
-</li>
-<li><p>接着scheduler调度器看到未调度的pod对象，根据调度规则选择一个可调度的节点，加载到pod描述中nodeName字段，并将pod对象返回apiserver并写入etcd。</p>
-</li>
-<li><p>kubelet在看到有pod对象中nodeName字段属于本节点，将其从队列中拉出，通过容器运行时创建pod中描述的容器。</p>
-</li>
-</ul>
-<h2 id="Kubernetes-API"><a href="#Kubernetes-API" class="headerlink" title="Kubernetes API"></a>Kubernetes API</h2><p>Kubernetes把其<strong>管理的资源</strong>均视为<strong>API对象</strong>，并对外提供REST风格的API来操纵这些对象。Kubernetes API由<strong>kube-apiserver</strong>组件提供，<strong>Kubernetes内部各组件与kube-apiserver通信也是使用API来驱动的</strong>，除此之外，命令行工具比如<strong>kubectl以及各种Kubernetes客户端程序均是使用API与Kubernetes通信</strong>。</p>
-<h3 id="API-格式"><a href="#API-格式" class="headerlink" title="API 格式"></a>API 格式</h3><p>Kubernetes API格式为prefix/group/version/resource，比如表示Deployment资源列表的API为/apis/apps/v1/deployments，其中apis表示前缀，apps表示API组，v1表示API组的版本，deployments表示资源名称，如下图所示：<br><img src="/images/golang/k8s/k8s_api.png" alt="avatar"></p>
-<h2 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h2><p>了解一个应用的功能，从API入手往往能快速地掌握住该应用的概况，包括它是什么，它能用来做什么以及怎么使用它。本节简要地介绍了Kubernetes的API设计，借此可以从宏观上对Kubernetes API有个基本的了解，为将来详细了解每个功能点，也就是每个具体的API打下基础。</p>
-<p>Kubernetes API的分组设计为其提供了无限的扩展能力，借此机制可以轻松地为Kubernetes提供扩展功能，用户不仅可以使用CRD（Custom Resource Definition）功能来提供新的API，还可以通过扩展apiserver来扩展功能。</p>
-<p>在提出API分组理念以前，Kubernetes就存在了以api为前缀的一组API，这了保持兼容性，这组核心API并没有划分到特定的组，它的API格式则是prefix/version/resource（少了group名字），比如/api/v1/Pods。通常我们在说API版本时往往是指group/version，即带上组名和版本，为了描述上的方便，社区开发者日常交流时往往称这组特别的API为core组。</p>
-<h2 id="Pod"><a href="#Pod" class="headerlink" title="Pod"></a>Pod</h2><h3 id="概念："><a href="#概念：" class="headerlink" title="概念："></a>概念：</h3><p>尽管Kubernetes是<strong>容器编排系统</strong>，但它并<strong>不直接管理容器</strong>，它管理的却是名为Pod的对象。<br>Pod是对容器的高级抽像，Pod单词英文含义为豆荚，非常形象地揭示了其于容器的关系，就像一个豆荚中可以含一个或多个豆子一样，<strong>一个Pod也可以包含一个或多个容器</strong>。<br>在Kubernetes中，<strong>Pod是最基础的对象，不管Pod中包含多少容器，Pod的创建和销毁对应的是其包含的所有容器一并创建和销毁</strong>。</p>
-<h3 id="优势"><a href="#优势" class="headerlink" title="优势"></a>优势</h3><p>Pod可以封装容器，借此我们可以在一定程度上完成容器的批量管理</p>
-<h3 id="局限性"><a href="#局限性" class="headerlink" title="局限性"></a>局限性</h3><p>尽管Pod可以封装容器，借此我们可以在一定程度上完成容器的批量管理，但实际上直接创建Pod的场景非常罕见。<br>Kubernetes将Pod视为一种不可靠的资源，它没有自愈能力，当遇到node异常或因资源不足而被驱逐时，Pod将会被删除。<br>为了满足各种场景下管理Pod的诉求，Kubernetes在Pod之上又提供了多种控制器资源，<strong>比如Deployment、StatefulSet和DaemonSet等</strong>，这些控制器可以帮助我们更好的管理Pod，确保Pod总是按照我们预期的行为在运行。</p>
-<h3 id="总结-1"><a href="#总结-1" class="headerlink" title="总结"></a>总结</h3><p>Pod在Kubernetes系统中只是一个资源，它不是一个进程，它是基于容器的抽象，它为一个或多个容器准备运行环境，运行一个Pod，最终还是把容器一个个交给容器运行时来运行。<br>尽管在Kubernetes系统中我们一般不直接创建Pod，但它是最基础的资源，Kubernetes大部分特性都是围绕如何更好地运行、管理Pod而展开，所以必须对Pod有一定的了解才可以开始后面的学习。</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">Pod创建：kubectl create -f pod_simple.yaml </span><br><span class="line"></span><br><span class="line">Pod查看：kubectl get pods</span><br><span class="line"></span><br><span class="line">Pod更新：kubectl apply -f pod_simple.yaml </span><br><span class="line"></span><br><span class="line">Pod删除：kubectl delete pods pod-runs-nginx</span><br></pre></td></tr></table></figure>
-<h2 id="Controller"><a href="#Controller" class="headerlink" title="Controller"></a>Controller</h2><h3 id="ReplicationController"><a href="#ReplicationController" class="headerlink" title="ReplicationController"></a>ReplicationController</h3><p>ReplicationController作用是保证副本数。</p>
-<p>Kubernetes集群包含2个Node，每个Node上均运行一个同类型的Pod来做负载均衡，如果其中某个Node被管理员强制关机或者Node意外宕机时，会发生什么呢？如下图：<br><img src="/images/golang/k8s/replicationcontroller-1.png" alt="avatar"><br>由于Pod被调度到某个Node后就与Node绑定，当Node宕机后，Node中的所有Pod也都停止运行。<br>上图所示场景中，Node2被关闭后，相应的Pod-2也会停止，Pod-2并不会重新被调度到Node1。</p>
-<p>实际应用场景中，维持稳定的Pod副本数是非常必要的，因此Kubernetes引入了ReplicationController。</p>
-<p>ReplicationController设计初衷是维持集群中指定类型Pod的副本数，但它只支持等值Selector，不支持基于集合的Selector。为了不违背API兼容性原则，Kubernetes不得已提供了另一种制器ReplicaSet来替换它。</p>
-<p>所以，实际场景中几乎不会用到ReplicationController，虽然它是一个稳定的API。</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">ReplicationController创建：kubectl create -f replication_controller_simple.yaml </span><br><span class="line"></span><br><span class="line">ReplicationController查看：kubectl get replicationcontrollers   -&gt;  kubectl get pods  -&gt; kubectl describe replicationcontrollers replication-controller-runs-pod</span><br><span class="line"></span><br><span class="line">ReplicationController更新：kubectl apply -f replication_controller_simple.yaml </span><br><span class="line"></span><br><span class="line">ReplicationController删除： kubectl delete -f replication_controller_simple.yaml    当删除ReplicationController对象时，由该对象创建的Pod默认也会被删除</span><br></pre></td></tr></table></figure>
-<h3 id="ReplicaSet"><a href="#ReplicaSet" class="headerlink" title="ReplicaSet"></a>ReplicaSet</h3><h4 id="ReplicaSet与ReplicationController的区别"><a href="#ReplicaSet与ReplicationController的区别" class="headerlink" title="ReplicaSet与ReplicationController的区别"></a>ReplicaSet与ReplicationController的区别</h4><p>ReplicationController和ReplicaSet都属于Pod控制器，其设计初衷几乎完全相同，都是确保指定类型的Pod副本数维持在期望值，ReplicationController出现时间比ReplicaSet要早，那么为什么已经有了ReplicationController的情况下，还要再设计一个ReplicaSet呢？二者到底有什么区别呢？</p>
-<p>二者的主要区别在于标签选择器，ReplicaSet拥有更先进的标签选择器，<br>ReplicationController只支持旧式的标签选择器，而ReplicaSet不仅支持旧式选择器，还支持新式选择器。</p>
-<p>ReplicationController支持的选择器称为Equality-based选择器，即基于等值的选择器：<br>Selector map[string]string</p>
-<p>ReplicaSet不仅支持Equality-based选择器，还支持Set-based选择器，即基于集合的选择器：<br><figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">type LabelSelector struct &#123;</span><br><span class="line">    MatchLabels map[string]string</span><br><span class="line">    MatchExpressions []LabelSelectorRequirement</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure></p>
-<p>ReplicationController特性演进到V1时还没有支持Set-based选择器，而Kubernetes又希望推出一款支持Set-based选择器的Pod控制器，为了不破坏API兼容性，不得已才推出了ReplicaSet控制器来替代ReplicationController</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">ReplicaSet创建：kubectl create -f replicaset.yaml </span><br><span class="line"></span><br><span class="line">ReplicaSet查看：kubectl get replicaset   -&gt;  kubectl get pods  -&gt;kubectl describe replicaset replicaset-runs-pod </span><br><span class="line"></span><br><span class="line">ReplicaSet更新：kubectl edit replicaset replicaset-runs-pod  </span><br><span class="line"></span><br><span class="line">ReplicaSet删除： kubectl delete -f replicaset.yaml   当删除ReplicaSet对象时，由该对象创建的Pod默认也会被删除</span><br></pre></td></tr></table></figure>
-<p><strong>ReplicaSet控制器的能力侧重于对副本数量的把控，它能保证集群中时刻运行指定数量的Pod副本，当配置中Pod副本数量变化时，可以动态地调整Pod数量。</strong></p>
-<h3 id="Deployment"><a href="#Deployment" class="headerlink" title="Deployment"></a>Deployment</h3><p>Deployment是继<strong>ReplicationController和ReplicaSe</strong>t之后推出的更高级的控制器，它通过Deployment对象来声明Pod的期望状态，这些状态包括Pod的副本数和Pod的模版等，运行于kube-controller-manager组件中的Deployment Controller（Deployment控制器）时刻监控Deployment对象的变化，并根据Deployment对象中的配置来调整Pod，最终保证Pod以期望的形态在运行。</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">Deployment创建:kubectl create -f deployment.yaml</span><br><span class="line"></span><br><span class="line">Deployment查看:kubectl get deployment  -&gt; kubectl get replicaset   -&gt; kubectl get pods</span><br><span class="line"></span><br><span class="line">Deployment更新:kubectl edit deployments nginx-deployment   </span><br><span class="line"></span><br><span class="line">Deployment删除:kubectl delete deployment nginx-deployment   当删除Deployment资源时，由Deployment控制器创建的ReplicaSet也会被删除，因此由ReplicaSet创建的Pod也会被删除。</span><br></pre></td></tr></table></figure>
-<h3 id="DaemonSet"><a href="#DaemonSet" class="headerlink" title="DaemonSet"></a>DaemonSet</h3><p>DaemonSet是一种面向特定应用场景的Pod控制器，尽管它也可以管理Pod的多个副本，但它主要用于保证一个Node上只运行一个Pod的场景，如下图所示：<br><img src="/images/golang/k8s/daemonset.png" alt="avatar"><br>DaemonSet可以确保一个Node上最多只运行一个Pod副本，进一步说，DaemonSet可以选择特定类型的Node来部署Pod。此处，当选定类型的Node加入集群时，该Node会自动运行一个新的Pod副本，并且当该Node被删除时，相应的Pod也会被删除，而不会在其他Node上重建。</p>
-<p><strong>DaemonSet可以确保每个工作节点上最多运行一个应用副本，这个应用副本类似于Linux操作系统中的daemon进程，这也正是DaemonSet名称的由来</strong></p>
-<p>DaemonSet通常用于管理那些执行系统级的应用，比如：</p>
-<ul>
-<li>每个工作节点运行一个存储服务，供该工作节点上其他应用使用；</li>
-<li>每个工作节点运行一个日志收集服务，用于收集该节点上的运行日志；</li>
-<li>每个工作节点运行一个监控指标收集服务，用于提供该节点的监控信息；</li>
-</ul>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">DaemonSet创建：kubectl create -f daemonset.yaml </span><br><span class="line"></span><br><span class="line">DaemonSet查看：kubectl get daemonset  -&gt;  kubectl get pods -o wide</span><br><span class="line"></span><br><span class="line">DaemonSet更新：kubectl edit daemonset   daemonset.yaml </span><br><span class="line"></span><br><span class="line">DaemonSet删除：kubectl delete daemonsets nginx-daemonset      像其他Pod控制器一样，当删除DaemonSet对象时，其所管理的Pod默认也会被删除</span><br></pre></td></tr></table></figure>
-<h3 id="Statefulset"><a href="#Statefulset" class="headerlink" title="Statefulset"></a>Statefulset</h3><p>StatefulSet是为了解决<strong>有状态服务</strong>的问题（对应Deployments和ReplicaSets是为无状态服务而设计），其应用场景包括</p>
-<ul>
-<li>稳定的持久化存储，即Pod重新调度后还是能访问到相同的持久化数据，基于PVC来实现</li>
-<li>稳定的网络标志，即Pod重新调度后其PodName和HostName不变，基于Headless Service（即没有Cluster IP的Service）来实现</li>
-<li>有序部署，有序扩展，即Pod是有顺序的，在部署或者扩展的时候要依据定义的顺序依次依次进行（即从0到N-1，在下一个Pod运行之前所有之前的Pod必须都是Running和Ready状态），基于init containers来实现</li>
-<li>有序收缩，有序删除（即从N-1到0）</li>
-</ul>
-<p>从上面的应用场景可以发现，StatefulSet由以下几个部分组成：</p>
-<ul>
-<li>用于定义网络标志（DNS domain）的Headless Service</li>
-<li>用于创建PersistentVolumes的volumeClaimTemplates</li>
-<li>定义具体应用的StatefulSet</li>
-</ul>
-<p>StatefulSet中每个Pod的DNS格式为statefulSetName-{0..N-1}.serviceName.namespace.svc.cluster.local，其中</p>
-<ul>
-<li>serviceName为Headless Service的名字</li>
-<li>0..N-1为Pod所在的序号，从0开始到N-1</li>
-<li>statefulSetName为StatefulSet的名字</li>
-<li>namespace为服务所在的namespace，Headless Servic和StatefulSet必须在相同的namespace</li>
-<li>.cluster.local为Cluster Domain，</li>
-</ul>
-<p><strong>StatefulSet注意事项</strong></p>
-<ul>
-<li>还在beta状态，需要kubernetes v1.5版本以上才支持</li>
-<li>所有Pod的Volume必须使用PersistentVolume或者是管理员事先创建好</li>
-<li>为了保证数据安全，删除StatefulSet时不会删除Volume</li>
-<li>StatefulSet需要一个Headless Service来定义DNS domain，需要在StatefulSet之前创建好</li>
-<li>目前StatefulSet还没有feature complete，比如更新操作还需要手动patch。</li>
-</ul>
-<h2 id="Job-和-CronJob"><a href="#Job-和-CronJob" class="headerlink" title="Job 和 CronJob"></a>Job 和 CronJob</h2><p>Job负责处理任务，即仅执行一次的任务，它保证批处理任务的一个或多个Pod成功结束。而CronJob则就是在Job上加上了时间调度。</p>
-<p>一旦 Job 被删除，由 Job 创建的 Pod 也会被删除。注意，所有由名称为 “hello” 的 Cron Job 创建的 Job 会以前缀字符串 “hello-” 进行命名。如果想要删除当前 Namespace 中的所有 Job，可以通过命令 kubectl delete jobs –all 立刻删除它们。</p>
-<p>cronJob使用案例：</p>
-<p>1、在给定时间点调度Job</p>
-<p>2、创建周期性运行的Job。如：数据备份、数仓导数、执行任务、邮件发送、数据拉取、数据推送</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">Job创建：kubectl create -f ./job.yaml</span><br><span class="line"></span><br><span class="line">Job查看：kubectl get jobs</span><br><span class="line"></span><br><span class="line">cronJob创建：kubectl create -f cronjob-demo.yaml</span><br><span class="line"></span><br><span class="line">cronJob查看：kubectl get cronjob</span><br><span class="line"></span><br><span class="line">cronJob删除：kubectl delete cronjob hello</span><br></pre></td></tr></table></figure>
-<h2 id="Service"><a href="#Service" class="headerlink" title="Service"></a>Service</h2><p>• 防止Pod失联<br>• 定义一组Pod的访问策略</p>
-<p>Service是一种抽像资源，用于暴露运行在Pod中的服务并提供一定的负载均衡能力。</p>
-<p><strong>出现背景</strong>：集群部署时，出现IP随机分配；用户需要提供负载，动态管理Pod并进行流量分发。</p>
-<p>简单地说，Service通过spec.selector来查找Pod，并把这些Pod提供的服务“聚合”起来，对外提供一个统一入口。创建Service对象时，Kubernetes默认会给Service分配一个IP（称为Cluster IP），例如10.0.0.165，Service通过该IP对外提供服务，当请求流量到来时，再把流量转发到后端的Pod，并提供一定的负载均衡能力。整体工作流程如下所示：<br><img src="/images/golang/k8s/service.png" alt="avatar"></p>
-<p>访问Service的Cluster IP，效果与直接访问Pod的IP地址一样，但使用Service可以屏蔽后端Pod细节，对外提供固定的访问入口，当后端的Pod有变动时，Service会自动更新转发列表。</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">service创建：kubectl create -f service.yaml </span><br><span class="line"></span><br><span class="line">service查看：kubectl get services nginx-service -o wide    --&gt;  查看Pod拓扑  kubectl get endpoints nginx-service </span><br><span class="line"></span><br><span class="line">service编辑：kubectl edit service nginx-service</span><br><span class="line"></span><br><span class="line">service删除： kubectl delete service nginx-service      ---&gt;  当删除Service对象时，随Service对象创建而自动创建的Endpoints对象也会一并删除，后端的Pod不会被删除，它仍然受相应的Pod控制器管理。</span><br></pre></td></tr></table></figure>
-<h2 id="Secret"><a href="#Secret" class="headerlink" title="Secret"></a>Secret</h2><p>当容器中的应用需要访问容器以外的服务（比如数据库、代码仓库和kube-apiserver等）时，那么不可避免地需要使用相应服务的帐号、密码等凭据（取决于具体服务的要求）。所以如何为容器提供凭据、以及容器中的应用如何使用这些凭据就成了不得不思考的问题。</p>
-<p>在没有Secret之前，为容器提供凭据主要有如下几种方式：</p>
-<ul>
-<li>将凭据硬编码；</li>
-<li>将凭据保存到文件，并最终放置到镜像；</li>
-<li>将凭据保存到文件中，并通过volume的形式挂载到容器；</li>
-</ul>
-<p>首先，将凭据硬编码的方式当然不可取，每次凭据变更都需要重新生成二进制文件。其次将私密的凭据放入镜像，会在镜像分发过程中泄露凭据，同时凭据变更也需要重新制做镜像，变更周期过长。最后，将凭据使用volume的形式挂载到容器这种方式，需要保证volume在多个集群节点共享（或每个节点拥有一个拷贝副本），难以保证凭据的私密性，同时在集群扩容时还需要保证新增节点上能够访问到凭据，维护成本比较大。</p>
-<p>针对以上问题，Kubernetes设计了一个新的名为Secrets的资源类型，专门用来保存私密的凭据，它以键值方式存储凭据，并支持在 Pod 资源中通过环境变量或volume引用。</p>
-<h2 id="ResourceQuota"><a href="#ResourceQuota" class="headerlink" title="ResourceQuota"></a>ResourceQuota</h2><p>ResourceQuota是用于设定资源配额的对象，集群管理员可以为每个namespace创建ResourceQuota对象来限定资源的使用额度，从而可以精准且合理地分配集群资源，避免多个namespace中的对象争抢共享的集群资源。</p>
-<h3 id="ResourceQuota的出现背景"><a href="#ResourceQuota的出现背景" class="headerlink" title="ResourceQuota的出现背景"></a>ResourceQuota的出现背景</h3><p>实际应用场景中，经常出现多用户或者多团队共用同一个集群的情况，管理员往往会为不同用户或团队分配不同的namespace，从而将彼此隔离，但namespace只能做到逻辑上的隔离，多个namespace中的应用仍然会共享集群的硬件资源，比如CPU、内存和存储等，如果某个namespace下的应用大量消耗这些共享资源，那么势必会影响其他namespace下的的应用。</p>
-<p>ResourceQuota正是针对这种问题而提供的一个解决方案。例如，用户A和B共享某个含有16核CPU以及32G内存资源的集群，并且用户A和B分别使用namespace-a和namespace-b，那么管理员可以分别在namespace-a和namespace-b中创建一个ResourceQuota对象，并指定CPU和内存配额（比如平分集群资源），那么用户A和B后续创建的应用资源总消耗量将不会超过该配额，一旦超过该配额，Kubernetes将拒绝创建新的应用。</p>
-<h3 id="ResourceQuota功能启用"><a href="#ResourceQuota功能启用" class="headerlink" title="ResourceQuota功能启用"></a>ResourceQuota功能启用</h3><p>若要启用ResourceQuota功能，需要把字符串“ResourceQuota”加到kube-apiserver的–enable-admission-plugins参数列表中。比如：</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line"># kube-apiserver &lt;other parameters&gt; --enable-admission-plugins=&quot;ResourceQuota,&lt;other plugins&gt;&quot;</span><br></pre></td></tr></table></figure>
-<p>在绝大多数Kubernetes发行版中，ResourceQuota功能都是默认开启的。</p>
-<h3 id="ResourceQuota资源配置"><a href="#ResourceQuota资源配置" class="headerlink" title="ResourceQuota资源配置"></a>ResourceQuota资源配置</h3><p>一个简单的ResourceQuota配置，如下所示：</p>
-<figure class="highlight plain"><table><tr><td class="code"><pre><span class="line">apiVersion: v1</span><br><span class="line">kind: ResourceQuota</span><br><span class="line">metadata:</span><br><span class="line">  name: pod-count</span><br><span class="line">  namespace: default</span><br><span class="line">spec:</span><br><span class="line">  hard:</span><br><span class="line">    pods: &quot;0&quot;</span><br></pre></td></tr></table></figure>
-<p>这份配置将在名为default的namespace中创建一个ResourceQuota对象，该对象将确保在该namespace中“禁止”创建Pod对象。其主要配置如下：</p>
-<p>metadata.namespace：ResourceQuota对象所属的namespace，也是该对象作用的namespace；<br>spec.hard：指定硬性配额列表；<br>spec.hard.pods：为Pod对象个数设置配额；</p>
-<p>ResourceQuota还支持其他更丰富的配置，比如<strong>支持对特性状态的资源实施限额、对特定优先级的资源实施限额</strong>等，这部分内容我们将在后绪的章节中陆续介绍。</p>
-<h3 id="ResourceQuota可限制的资源"><a href="#ResourceQuota可限制的资源" class="headerlink" title="ResourceQuota可限制的资源"></a>ResourceQuota可限制的资源</h3><p>ResourceQuota支持为多种类型的资源设置限额：</p>
-<ul>
-<li>计算类资源，比如CPU、内存等；</li>
-<li>扩展类资源，比如GPU；</li>
-<li>存储类资源，比如持久卷；</li>
-</ul>
-<p>除了这些资源类型以外，还支持限定对象个数，这些对象包括：</p>
-<ul>
-<li>configmaps</li>
-<li>persistentvolumeclaims</li>
-<li>pods</li>
-<li>replicationcontrollers</li>
-<li>resourcequotas</li>
-<li>services</li>
-<li>services.loadbalancers</li>
-<li>services.nodeports</li>
-<li><p>secrets</p>
-<p><strong>Label</strong> ：标签，附加到某个资源上，用于关联对象、查询和筛选<br><strong>Namespaces</strong> ：命名空间，将对象逻辑上隔离<br><strong>Annotations</strong> ：注释</p>
-</li>
-</ul>
-]]></content>
+      
+      
+        <tags>
+            
+            <tag> golang </tag>
+            
+        </tags>
+      
+    </entry>
+    
+    
+    
+    <entry>
+      <title>区块链简述</title>
+      <link href="/2021/12/10/%E5%8C%BA%E5%9D%97%E9%93%BE%E5%85%A5%E9%97%A8/"/>
+      <url>/2021/12/10/%E5%8C%BA%E5%9D%97%E9%93%BE%E5%85%A5%E9%97%A8/</url>
+      
+        <content type="html"><![CDATA[<h2 id="什么是区块链"><a href="#什么是区块链" class="headerlink" title="什么是区块链"></a>什么是区块链</h2><h3 id="概念"><a href="#概念" class="headerlink" title="概念"></a>概念</h3><pre><code>它是一种**特殊的分布式数据库**，主要作用是**储存信息**。任何需要保存的信息，都可以写入区块链，也可以从里面读取，所以它是数据库。其次，任何人都可以架设服务器，加入区块链网络，成为一个节点。区块链的世界里面，没有中心节点，每个节点都是平等的，都保存着整个数据库。你可以向任何一个节点，写入/读取数据，因 为所有节点最后都会同步，保证区块链一致。</code></pre><h3 id="特点-区块链没有管理员，它是彻底无中心的"><a href="#特点-区块链没有管理员，它是彻底无中心的" class="headerlink" title="特点  区块链没有管理员，它是彻底无中心的"></a>特点  区块链没有管理员，它是彻底无中心的</h3><ul><li>区块链中的区块包含block、Nonce、coinbase、tx、pre、hash,而调整Nonce的值查找满足一定条件的hash,eg:hash的前6位数为0，的过程，就是挖矿的过程，挖矿不是本质，本质是为了达成共识（挖矿是一场数学游戏，f(序列化后的块的信息)&lt;target,即序列化后的block的信息的hash要小于目标值）</li><li>如何保证交易的安全性呢？数字签名（私钥由24个字节的一组数据构成），对message,publickey,signature(由私钥加密形成的一串数据)三个字段进行组合验证，如何验证呢？椭圆曲线</li><li>公钥是如何由私钥生成的呢？椭圆曲线(非对称加密)，不停地找椭圆的切线，切线和椭圆弧线相交点的对称点，形成三角形后与椭圆的交点的对称点继续。。。。。<br>-</li></ul><h2 id="什么是比特币"><a href="#什么是比特币" class="headerlink" title="什么是比特币"></a>什么是比特币</h2><ul><li>非对称加密形成的凭证（公钥和私钥）</li><li>原理：非对称加密保证了支付的可靠性</li></ul><h2 id="为什么用区块链"><a href="#为什么用区块链" class="headerlink" title="为什么用区块链"></a>为什么用区块链</h2><h3 id="可使用领域较多："><a href="#可使用领域较多：" class="headerlink" title="可使用领域较多："></a>可使用领域较多：</h3><ul><li>证券  <ul><li>股权交割</li><li>衍生合约</li><li>证券保险</li></ul></li><li>零售银行<ul><li>跨境汇款</li><li>抵押品管理</li><li>抵押合约执行</li></ul></li><li>国际贸易<ul><li>提货单</li><li>跨境支付</li></ul></li><li>公共档案<ul><li>房产登记</li><li>车辆登记</li><li>产权登记</li><li>营业执照登记</li></ul></li><li>企业银行  <ul><li>财团贷款</li><li>银行间结算</li></ul></li><li>微博微信（去中心化，任何人都删除不了） </li><li>游戏（玩家控制）</li></ul><ul><li>安全不可篡改</li><li>去中心化</li><li>可追溯（电商公司可实现）</li></ul><h3 id="区块链的局限性"><a href="#区块链的局限性" class="headerlink" title="区块链的局限性"></a>区块链的局限性</h3><ul><li>不适合高频高性能的交易环境（如毫秒级交易响应时间）</li><li>没约业务网络的小组织</li><li>不是一个数据库替代方案</li><li>不是一个消息传递替代方案</li><li><p>不是一个交易处理系统替代方案</p><p>如何保护隐私呢？加密算法，地址的不可确定性</p></li></ul><h2 id="怎么使用区块链"><a href="#怎么使用区块链" class="headerlink" title="怎么使用区块链"></a>怎么使用区块链</h2><p>merkle（默克尔树）—-&gt; 一种数据结构，由不同数据块的哈希散列而成（用于生成区块中所有交易的概括（默克尔根））—-&gt; 需要实战去写一下  </p><p>怎么实现呢？  merkle root 是由hash1和hash2，进行大小端的转换，之后拼接在一起，进行double sha256(双哈希)计算出来的数据</p><p>账本是如何更新的呢？账本信息同步到其它节点（是否是本人发起的，比特币是否够用呢？）数字签名保证本人发起，用信息+公钥验证签名的有效性</p><p>区块链可以追溯比特币的来源</p><p>双花交易问题：添加prev的概念，增加时间的概念，形成事件链</p><p>概念</p><p>UTXO：未使用的交易输出<br>ECDSA：椭圆曲线数字签名算法<br>secp256k1椭圆曲线  —&gt; 需要公钥私钥的生成实战</p>]]></content>
+      
+      
       <categories>
-        <category>schedule</category>
+          
+          <category> blockchain </category>
+          
       </categories>
-      <tags>
-        <tag>k8s</tag>
-      </tags>
-  </entry>
+      
+      
+        <tags>
+            
+            <tag> blockchain </tag>
+            
+        </tags>
+      
+    </entry>
+    
+    
+    
+    <entry>
+      <title>工作简历</title>
+      <link href="/1994/01/17/introduce/"/>
+      <url>/1994/01/17/introduce/</url>
+      
+        <content type="html"><![CDATA[<p><img src="/images/woman.jpeg" alt="introduce"></p><h1 id="基本情况"><a href="#基本情况" class="headerlink" title="基本情况"></a>基本情况</h1><p> Tina ｜ 女 ｜ 汉族 ｜ 未婚 ｜ 1994年1月17日出生 ｜ 山西人 ｜ 本科学历 </p><h1 id="教育情况"><a href="#教育情况" class="headerlink" title="教育情况"></a>教育情况</h1><p>2013/09 ~ 2017/07 | 山西农业大学 ｜ 信息与计算科学 ｜ 本科</p><h1 id="技能情况"><a href="#技能情况" class="headerlink" title="技能情况"></a>技能情况</h1><ul><li>掌握多种开发语言, 熟悉java，golang，了解Solidity ；</li><li>熟悉云计算开发流程，熟悉OpenStack及其原理；</li><li>了解区块链以太坊Truffle以及Hyperledger fabric，对区块链感兴趣 ；</li><li>熟悉容器技术docker，及其原理;</li><li>熟悉中间件Redis/Kafka/Zookeeper/Etcd/Mysql的使用及其原理；</li></ul><p>Detail: <a href="https://tingtingtian.github.io" target="_blank" rel="noopener">https://tingtingtian.github.io</a></p><h1 id="联系方式"><a href="#联系方式" class="headerlink" title="联系方式"></a>联系方式</h1><p>Email: <a href="mailto:2565086122@qq.com" target="_blank" rel="noopener">2565086122@qq.com</a><br>电话:  18404969483</p><h1 id="工作项目经历"><a href="#工作项目经历" class="headerlink" title="工作项目经历"></a>工作项目经历</h1><h2 id="2020-12-–-Now"><a href="#2020-12-–-Now" class="headerlink" title="2020/12 – Now"></a>2020/12 – Now</h2><h3 id="建信金科"><a href="#建信金科" class="headerlink" title="建信金科"></a>建信金科</h3><p><strong> 职位 </strong> : 云计算开发工程师<br><strong> 工作描述 </strong></p><ul><li>负责建行云代码编译及分析；</li><li>负责MultiCloud平台相关Provider开发；</li><li>负责OpenStack二次开发；</li></ul><h2 id="2020-06-–-2020-12"><a href="#2020-06-–-2020-12" class="headerlink" title="2020/06 – 2020/12"></a>2020/06 – 2020/12</h2><h3 id="北京网众共创科技有限公司"><a href="#北京网众共创科技有限公司" class="headerlink" title="北京网众共创科技有限公司"></a>北京网众共创科技有限公司</h3><p><strong> 职位 </strong> : 云平台开发工程师<br><strong> 工作描述 </strong></p><ul><li>负责HCCloud的概要设计、原型设计；</li><li>负责HCCloud的前后端研发、测试、上线；</li></ul><h2 id="2019-07-–-2020-06"><a href="#2019-07-–-2020-06" class="headerlink" title="2019/07 – 2020/06"></a>2019/07 – 2020/06</h2><h3 id="北京航天紫光科技有限公司"><a href="#北京航天紫光科技有限公司" class="headerlink" title="北京航天紫光科技有限公司"></a>北京航天紫光科技有限公司</h3><p><strong> 职位 </strong> : 云平台开发工程师<br><strong> 工作描述 </strong></p><ul><li>负责OpenStack组件二次开发封装，使其符合私有云的标准；</li><li>负责Glance、Flavor组件分页优化以及Glance镜像上传优化；</li><li>配合项目经理工作，完成相关概要设计、详细设计；</li></ul><h2 id="2017-09-–-2019-06"><a href="#2017-09-–-2019-06" class="headerlink" title="2017/09 – 2019/06"></a>2017/09 – 2019/06</h2><h3 id="中电太极集团"><a href="#中电太极集团" class="headerlink" title="中电太极集团"></a>中电太极集团</h3><p><strong> 职位 </strong> : java开发工程师<br><strong> 工作描述 </strong></p><ul><li>配合项目经理的工作，按照项目计划，按时提交高质量代码，完成开发任务；</li><li>参与讨论解决项目中遇到的问题，解决问题；</li><li>规范文档的编写、维护，以及其他与项目相关工作。</li></ul><h3 id="项目"><a href="#项目" class="headerlink" title="项目"></a>项目</h3><h2 id="2020-12-–-Now-1"><a href="#2020-12-–-Now-1" class="headerlink" title="2020/12 – Now"></a>2020/12 – Now</h2><h3 id="建信金科-1"><a href="#建信金科-1" class="headerlink" title="建信金科"></a>建信金科</h3><p><strong> 职位 </strong> : 云计算开发工程师</p><h4 id="金融云"><a href="#金融云" class="headerlink" title="金融云"></a>金融云</h4><p><strong> 开发环境 </strong> : windows+goland+go15.6<br><strong> 软件架构 </strong> : grpc<br><strong> 项目周期 </strong> : 2020.12～2021.10<br><strong> 项目介绍 </strong> :<br>金融云是基于IaaS层，打造的为银行内部提供一体化云服务，多云产品集成、跨数据中心管理的企业级综合平台，平台应用开源云平台架构，基于KVM\VMWare虚拟化技术，保障了云平台的高可用性。后期加入了对TCE云的支持。云管理平台提供了包括宿主机管理、虚拟机管理、网络管理、存储管理、模版管理、快照管理等资源管理功能。整合多个平台的优质资源，实现多云管理。<br><strong> 责任描述 </strong> :<br>1、主要负责项目中镜像、租户、配额等模块的设计、开发和重构；<br>2、vmware golang sdk 的设计、编写和维护；<br>3、项目中相关模块文档完善。</p><h2 id="2019-07-–-2020-06-1"><a href="#2019-07-–-2020-06-1" class="headerlink" title="2019/07 – 2020/06"></a>2019/07 – 2020/06</h2><h3 id="北京航天紫光科技有限公司-1"><a href="#北京航天紫光科技有限公司-1" class="headerlink" title="北京航天紫光科技有限公司"></a>北京航天紫光科技有限公司</h3><p><strong> 职位 </strong> : 云平台开发工程师</p><h4 id="CloudOS"><a href="#CloudOS" class="headerlink" title="CloudOS"></a>CloudOS</h4><p><strong> 开发环境 </strong> : windows+idea+jdk1.8<br><strong> 软件架构 </strong> : springBoot+ MyBatis+ MySql+Redis+RabbitMQ+Iview<br><strong> 项目介绍 </strong> ：<br>项目背景：伴随信息化技术的飞跃发展，传统数据中心管理中存在资源瓶颈、信息孤岛、标准不一、系统复杂、服务水平低下等诸多矛盾被愈发激化，IT 的整体管控模式急需向云化模式转型。因此，越来越多的企业和组织正在着力于传统 IT 向云化 IT 转变，并通过云计算技术和服务来实现 IT 的统一运营，提升运营效益。而在业务发展和数字化转型的过程中，越来越多的组织也期望 IT 部门能够敏捷应对持续演变的业务需求，并通过智能应用分析海量的数据，以提高企业的数字化和智能化。<br>项目主要业务：CloudOS云管理系统从业务上来说包括三层业务层、平台层和基础层。业务层主要是由虚拟化平台，云管理平台和运维平台三部分构成；平台层由虚拟化VIM，OpenStack，prometheus三部分构成；基础层由虚拟化VIK,KVM,agent组成的虚拟化与监控和由k8s，centos，docker组成的业务承载支撑。其中业务层的菜单整合，应用整合，权限整合，消息总线等都是由公共服务完成的。工作中所负责的主要是业务层中的云管理平台。云管理平台主要负责对计算，网络，存储等资源进行配置和调度，包括计算，网络，配置三个大模块。计算中包含主机，裸金属，镜像，硬盘，密钥对等功能模块；网络中包含私有网络，虚拟网卡，安全组，路由器等功能模块；配置中包含计算节点，裸金属节点，资源规格，存储类型等功能模块。<br><strong> 责任描述 </strong> :<br>1、主要负责项目中镜像、存储类型、资源规格模块的需求设计，概要设计，详细设计以及代码的开发以及后期BUG的修改；完成资源规格以及存储类型的前端代码，参与镜像前端代码的开发。<br>2、参与项目中重要问题讨论，其中重要的是租户/用户与OpenStack对接解决方案，镜像上传文件速度慢解决方案。</p><h2 id="2017-09-–-2019-06-1"><a href="#2017-09-–-2019-06-1" class="headerlink" title="2017/09 – 2019/06"></a>2017/09 – 2019/06</h2><h3 id="中电太极集团-1"><a href="#中电太极集团-1" class="headerlink" title="中电太极集团"></a>中电太极集团</h3><p><strong> 职位 </strong> : java开发工程师</p><h4 id="公文传办"><a href="#公文传办" class="headerlink" title="公文传办"></a>公文传办</h4><p><strong> 开发环境 </strong> : windows+eclipse neon+jdk1.8+tomcat7<br><strong> 软件架构 </strong> : Spring + Hibernate + Struts2 +达梦+easyui+poi<br><strong> 开发周期 </strong> : 2018.12~2019.01<br><strong> 项目介绍 </strong> :<br>随着业务的不断发展，客户人员对于文件的处理越来越复杂，错误常常发生，核对量巨大。为了解决这些问题，业务更好更快地发展，我们开发了该系统。该系统主要是对文件进行处理，包括文件登记、文件发送、文件接收、文件传阅、文件回退、文件销毁等等，其间涉及到文件发送的预案设置、文件传阅的传阅机制设置，文件的跨域传递或者域内传递问题；在系统中，同时对各阶段的文件进行统计分析、展示，通过echart中的柱状图，饼状图、折线图等等直观显示了文件的情况，实现了对多阶段文件的综合展示，便于用户对文件大体情况的直观了解。系统上线后，解决了客户的实际问题，促进了公司的发展，得到公司认可和赞誉。<br><strong> 责任描述 </strong> :<br>1、参与项目的讨论；<br>2、按照项目计划，完成任务，提交代码；<br>3、主要负责文件登记、文件发送、预案管理模块儿；<br>4、书写相关项目文档。</p><h4 id="数据融合工程"><a href="#数据融合工程" class="headerlink" title="数据融合工程"></a>数据融合工程</h4><p><strong> 开发环境 </strong> : windows+eclipse neon+jdk1.8+tomcat7<br><strong> 软件架构 </strong> : Spring + Mybatis +SpringMvc +DM+Echart+Kafka+Kettle<br><strong> 开发周期 </strong> : 2018.8~2018.10<br><strong> 项目介绍 </strong> :<br>该系统为了实现多数据应用系统数据的融合，得到更有价值的数据，而发起的。该系统分为数据服务层、数据处理层、数据采集层三个主要部分。数据采集层主要利用kettle进行数据抽取，通过数据采集服务器分主题存入主题数据中，并且通过kafka进行主题注册，以topic进行消息管理，发布到某个topic的消息通过策略分布到partition（消息队列），订阅者选择一个topic，会被分配到partition的一个id开始进行消费；数据处理层主要是主题数据建模，建模过程如上所说；数据服务层是一个有SpringMVC+Spring+Mybatis框架实现的数据服务平台，根据需求到Kafka订阅消息，并将获取的消息进行整合处理发送给使用者，并且用echart提供数据可视化展示。<br><strong> 责任描述 </strong> :<br>全程参与项目的设计，开发，测试以及维护，主要负责用ETL工具进行数据采集，并将采集的数据分主题存入主题数据库，负责获取订阅后的信息，并且用echart展示。</p><h4 id="标签生成系统"><a href="#标签生成系统" class="headerlink" title="标签生成系统"></a>标签生成系统</h4><p><strong> 开发环境 </strong> : windows+eclipse neon+jdk1.8+tomcat7<br><strong> 软件架构 </strong> : Spring + Mybatis +SpringMvc +MySql<br><strong> 开发周期 </strong> : 2018.6~2018.8<br><strong> 项目介绍 </strong> :<br>该系统为了方便库存装备的盘点、出库、入库，需要对设备标记，实现标签化管理。该系统主要用来制作、修改、查询、标记、重置标签，对多种标签写入的不同数据进行管理，维护。涉及到单个标签，外包装箱标签、包装箱标签等多种不同标签的制作、批量制作、读取、批量读取；在制作完成后涉及到与手持机和应用系统间的数据信息交互。<br><strong> 责任描述 </strong> :<br>全程参与项目的设计，开发，测试以及维护，主要负责单个标签，外包装箱标签、包装箱标签的制作、批量制作、读取、标定以及数据库的远程切换。</p>]]></content>
+      
+      
+      
+    </entry>
+    
+    
+  
+  
 </search>
